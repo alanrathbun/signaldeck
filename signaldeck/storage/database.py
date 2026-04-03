@@ -230,6 +230,30 @@ class Database:
         await self._conn.commit()
         return cursor.lastrowid
 
+    async def insert_bookmark(self, bookmark) -> int:
+        cursor = await self._conn.execute(
+            """INSERT INTO bookmarks (frequency, label, modulation, decoder, priority,
+               camp_on_active, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (bookmark.frequency, bookmark.label, bookmark.modulation, bookmark.decoder,
+             bookmark.priority, int(bookmark.camp_on_active), bookmark.notes,
+             _dt_to_str(bookmark.created_at)))
+        await self._conn.commit()
+        return cursor.lastrowid
+
+    async def get_all_bookmarks(self):
+        from signaldeck.storage.models import Bookmark
+        cursor = await self._conn.execute("SELECT * FROM bookmarks ORDER BY priority DESC, frequency")
+        rows = await cursor.fetchall()
+        return [Bookmark(id=row["id"], frequency=row["frequency"], label=row["label"],
+                modulation=row["modulation"], decoder=row["decoder"], priority=row["priority"],
+                camp_on_active=bool(row["camp_on_active"]), notes=row["notes"],
+                created_at=_str_to_dt(row["created_at"])) for row in rows]
+
+    async def delete_bookmark(self, bookmark_id: int) -> bool:
+        cursor = await self._conn.execute("DELETE FROM bookmarks WHERE id = ?", (bookmark_id,))
+        await self._conn.commit()
+        return cursor.rowcount > 0
+
     async def get_recent_activity(self, limit: int = 50) -> list[ActivityEntry]:
         cursor = await self._conn.execute(
             "SELECT * FROM activity_log ORDER BY timestamp DESC LIMIT ?",
