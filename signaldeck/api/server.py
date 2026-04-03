@@ -43,6 +43,14 @@ def create_app(config: dict) -> FastAPI:
     app.include_router(recordings_router, prefix="/api")
     app.include_router(analytics_router, prefix="/api")
 
+    from signaldeck.api.websocket.live_signals import router as ws_signals_router
+    from signaldeck.api.websocket.audio_stream import router as ws_audio_router
+    from signaldeck.api.websocket.waterfall import router as ws_waterfall_router
+
+    app.include_router(ws_signals_router)
+    app.include_router(ws_audio_router)
+    app.include_router(ws_waterfall_router)
+
     @app.get("/api/health")
     async def health():
         return {"status": "ok", "version": __version__}
