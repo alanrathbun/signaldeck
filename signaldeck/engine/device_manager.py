@@ -85,11 +85,13 @@ class DeviceManager:
         results = SoapySDR.Device.enumerate()
         devices = []
         for r in results:
+            # SoapySDRKwargs may not support .get(); convert to dict first
+            rd = dict(r)
             info = DeviceInfo(
-                label=r.get("label", r.get("driver", "unknown")),
-                driver=r.get("driver", "unknown"),
-                serial=r.get("serial", ""),
-                hardware_key=r.get("hardware", ""),
+                label=rd.get("label", rd.get("driver", "unknown")),
+                driver=rd.get("driver", "unknown"),
+                serial=rd.get("serial", ""),
+                hardware_key=rd.get("hardware", ""),
             )
             devices.append(info)
             logger.info("Found device: %s (driver=%s)", info.label, info.driver)
