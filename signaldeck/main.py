@@ -59,18 +59,23 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
             web_task = asyncio.create_task(server.serve())
             logger.info("Web dashboard at http://%s:%d", host, port)
 
-        # Discover devices
+        # Discover devices (skip audio devices, prefer SDR hardware)
         mgr = DeviceManager()
         available = mgr.enumerate()
-        if not available:
-            logger.error("No SDR devices found. Connect a device and try again.")
+        sdr_devices = [d for d in available if d.driver not in ("audio",)]
+        if not sdr_devices:
+            logger.error("No SDR devices found. Connect a HackRF or RTL-SDR and try again.")
+            logger.error("Detected non-SDR devices: %s",
+                         ", ".join(d.label for d in available) if available else "none")
             if web_task:
                 web_task.cancel()
             await db.close()
             return
 
-        logger.info("Found %d device(s)", len(available))
-        device = mgr.open(driver=available[0].driver)
+        logger.info("Found %d SDR device(s): %s", len(sdr_devices),
+                     ", ".join(f"{d.label} ({d.driver})" for d in sdr_devices))
+        device = mgr.open(driver=sdr_devices[0].driver,
+                          serial=sdr_devices[0].serial)
         device.set_gain(cfg["devices"]["gain"])
 
         # Build scan ranges
@@ -205,11 +210,13 @@ def sweep(range_spec: str | None, config_path: str | None) -> None:
     async def _sweep() -> None:
         mgr = DeviceManager()
         available = mgr.enumerate()
-        if not available:
-            click.echo("No SDR devices found.")
+        sdr_devices = [d for d in available if d.driver not in ("audio",)]
+        if not sdr_devices:
+            click.echo("No SDR devices found. Connect a HackRF or RTL-SDR.")
             return
 
-        device = mgr.open(driver=available[0].driver)
+        device = mgr.open(driver=sdr_devices[0].driver,
+                          serial=sdr_devices[0].serial)
         device.set_gain(cfg["devices"]["gain"])
         scanner = FrequencyScanner(
             device=device,
