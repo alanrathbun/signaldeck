@@ -432,7 +432,10 @@
     <section x-show="currentPage === 'settings'" x-cloak>
       <div class="page-header">
         <h1>Settings</h1>
-        <button class="btn btn-primary" @click="fetchStatus()">Refresh Status</button>
+        <div class="header-controls">
+          <button class="btn btn-success" @click="saveSettings()">Save Changes</button>
+          <button class="btn btn-primary" @click="fetchStatus()">Refresh</button>
+        </div>
       </div>
 
       <div class="settings-grid">
@@ -448,61 +451,69 @@
               <span class="setting-label">Mode</span>
               <span class="setting-value" x-text="scannerStatus.mode || '--'"></span>
             </div>
-            <div class="setting-row">
-              <span class="setting-label">Current Frequency</span>
-              <span class="setting-value" x-text="scannerStatus.current_frequency ? formatFreq(scannerStatus.current_frequency) : '--'"></span>
-            </div>
-            <div class="setting-row">
-              <span class="setting-label">Sample Rate</span>
-              <span class="setting-value" x-text="scannerStatus.sample_rate ? (scannerStatus.sample_rate / 1e6).toFixed(1) + ' MHz' : '--'"></span>
-            </div>
           </div>
         </div>
 
-        <!-- Device Info -->
+        <!-- Device & Scanner Settings (editable) -->
         <div class="card">
           <div class="card-header">
-            <h3>SDR Device</h3>
+            <h3>SDR &amp; Scanner</h3>
           </div>
           <div class="settings-list">
             <div class="setting-row">
-              <span class="setting-label">Device</span>
-              <span class="setting-value" x-text="scannerStatus.device || '--'"></span>
+              <label class="setting-label" for="set-gain">Gain (dB)</label>
+              <input id="set-gain" type="number" class="form-input setting-input" min="0" max="62" step="1"
+                     x-model.number="editSettings.gain">
             </div>
             <div class="setting-row">
-              <span class="setting-label">Gain</span>
-              <span class="setting-value" x-text="scannerStatus.gain != null ? scannerStatus.gain + ' dB' : '--'"></span>
+              <label class="setting-label" for="set-squelch">Squelch Offset (dB above noise floor)</label>
+              <input id="set-squelch" type="number" class="form-input setting-input" min="1" max="50" step="1"
+                     x-model.number="editSettings.squelch_offset">
             </div>
             <div class="setting-row">
-              <span class="setting-label">Squelch Offset</span>
-              <span class="setting-value" x-text="scannerStatus.squelch_offset != null ? scannerStatus.squelch_offset + ' dB above noise floor' : '--'"></span>
+              <label class="setting-label" for="set-dwell">Dwell Time (ms)</label>
+              <input id="set-dwell" type="number" class="form-input setting-input" min="10" max="1000" step="10"
+                     x-model.number="editSettings.dwell_time_ms">
             </div>
             <div class="setting-row">
-              <span class="setting-label">FFT Size</span>
-              <span class="setting-value" x-text="scannerStatus.fft_size || '--'"></span>
+              <label class="setting-label" for="set-fft">FFT Size</label>
+              <select id="set-fft" class="form-select setting-input" x-model.number="editSettings.fft_size">
+                <option value="512">512</option>
+                <option value="1024">1024</option>
+                <option value="2048">2048</option>
+                <option value="4096">4096</option>
+              </select>
             </div>
           </div>
         </div>
 
-        <!-- Scan Ranges -->
+        <!-- Scan Ranges (editable) -->
         <div class="card">
           <div class="card-header">
             <h3>Scan Ranges</h3>
+            <button class="btn btn-small btn-primary" @click="addScanRange()">+ Add Range</button>
           </div>
           <div class="settings-list">
-            <template x-for="(range, i) in (scannerStatus.scan_ranges || [])" :key="i">
-              <div class="setting-row">
-                <span class="setting-label" x-text="range.label || ('Range ' + (i + 1))"></span>
-                <span class="setting-value" x-text="range.start_mhz + ' - ' + range.end_mhz + ' MHz'"></span>
+            <template x-for="(range, i) in editSettings.scan_ranges" :key="i">
+              <div class="setting-row scan-range-row">
+                <input type="text" class="form-input" style="width:120px" placeholder="Label"
+                       x-model="editSettings.scan_ranges[i].label">
+                <input type="number" class="form-input" style="width:100px" placeholder="Start MHz" step="0.1"
+                       x-model.number="editSettings.scan_ranges[i].start_mhz">
+                <span style="color:#8b949e">-</span>
+                <input type="number" class="form-input" style="width:100px" placeholder="End MHz" step="0.1"
+                       x-model.number="editSettings.scan_ranges[i].end_mhz">
+                <span style="color:#8b949e">MHz</span>
+                <button class="btn btn-small btn-danger" @click="removeScanRange(i)" title="Remove">&times;</button>
               </div>
             </template>
-            <div class="setting-row" x-show="!scannerStatus.scan_ranges || scannerStatus.scan_ranges.length === 0">
-              <span class="setting-label">No ranges configured</span>
+            <div class="setting-row" x-show="editSettings.scan_ranges.length === 0">
+              <span class="setting-label">No ranges configured. Click "+ Add Range" above.</span>
             </div>
           </div>
         </div>
 
-        <!-- Audio Settings -->
+        <!-- Audio (read-only info) -->
         <div class="card">
           <div class="card-header">
             <h3>Audio</h3>
@@ -523,7 +534,7 @@
           </div>
         </div>
 
-        <!-- Storage -->
+        <!-- Storage (read-only) -->
         <div class="card">
           <div class="card-header">
             <h3>Storage</h3>
@@ -536,7 +547,7 @@
           </div>
         </div>
 
-        <!-- Authentication -->
+        <!-- Authentication (read-only) -->
         <div class="card">
           <div class="card-header">
             <h3>Authentication</h3>

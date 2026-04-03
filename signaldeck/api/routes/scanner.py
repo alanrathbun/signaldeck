@@ -1,4 +1,5 @@
 from fastapi import APIRouter
+from pydantic import BaseModel
 
 from signaldeck.api.server import get_config
 
@@ -56,3 +57,53 @@ async def get_settings():
             "enabled": config.get("auth", {}).get("enabled", False),
         },
     }
+
+
+class ScanRangeUpdate(BaseModel):
+    label: str = ""
+    start_mhz: float
+    end_mhz: float
+
+
+class SettingsUpdate(BaseModel):
+    gain: float | None = None
+    squelch_offset: float | None = None
+    dwell_time_ms: float | None = None
+    fft_size: int | None = None
+    scan_ranges: list[ScanRangeUpdate] | None = None
+
+
+@router.put("/settings")
+async def update_settings(data: SettingsUpdate):
+    """Update runtime configuration. Changes take effect on next scan cycle.
+
+    Changes are applied to the in-memory config. To persist across restarts,
+    save to a custom config YAML file.
+    """
+    config = get_config()
+    changed = []
+
+    if data.gain is not None:
+        config["devices"]["gain"] = data.gain
+        changed.append(f"gain={data.gain}")
+
+    if data.squelch_offset is not None:
+        config["scanner"]["squelch_offset"] = data.squelch_offset
+        changed.append(f"squelch_offset={data.squelch_offset}")
+
+    if data.dwell_time_ms is not None:
+        config["scanner"]["dwell_time_ms"] = data.dwell_time_ms
+        changed.append(f"dwell_time_ms={data.dwell_time_ms}")
+
+    if data.fft_size is not None:
+        config["scanner"]["fft_size"] = data.fft_size
+        changed.append(f"fft_size={data.fft_size}")
+
+    if data.scan_ranges is not None:
+        config["scanner"]["sweep_ranges"] = [
+            {"label": r.label, "start_mhz": r.start_mhz, "end_mhz": r.end_mhz}
+            for r in data.scan_ranges
+        ]
+        changed.append(f"scan_ranges={len(data.scan_ranges)} ranges")
+
+    return {"status": "updated", "changed": changed}

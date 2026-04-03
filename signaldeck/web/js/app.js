@@ -55,6 +55,13 @@ function dashboard() {
     // --- Scanner Status / Settings ---
     scannerStatus: {},
     settings: {},
+    editSettings: {
+      gain: 40,
+      squelch_offset: 10,
+      dwell_time_ms: 50,
+      fft_size: 1024,
+      scan_ranges: [],
+    },
 
     // --- Map ---
     signalMap: null,
@@ -371,17 +378,47 @@ function dashboard() {
       }
       if (settings) {
         this.settings = settings;
-        // Merge scanner config into scannerStatus for the template
+        // Populate editable settings from current config
+        if (settings.devices) {
+          this.editSettings.gain = settings.devices.gain ?? 40;
+        }
         if (settings.scanner) {
-          this.scannerStatus.scan_ranges = settings.scanner.sweep_ranges || [];
-          this.scannerStatus.squelch_offset = settings.scanner.squelch_offset;
-          this.scannerStatus.fft_size = settings.scanner.fft_size;
-          this.scannerStatus.dwell_time_ms = settings.scanner.dwell_time_ms;
+          this.editSettings.squelch_offset = settings.scanner.squelch_offset ?? 10;
+          this.editSettings.dwell_time_ms = settings.scanner.dwell_time_ms ?? 50;
+          this.editSettings.fft_size = settings.scanner.fft_size ?? 1024;
+          this.editSettings.scan_ranges = (settings.scanner.sweep_ranges || []).map(r => ({
+            label: r.label || '',
+            start_mhz: r.start_mhz,
+            end_mhz: r.end_mhz,
+          }));
+          this.scannerStatus.scan_ranges = this.editSettings.scan_ranges;
+          this.scannerStatus.squelch_offset = this.editSettings.squelch_offset;
+          this.scannerStatus.fft_size = this.editSettings.fft_size;
+          this.scannerStatus.dwell_time_ms = this.editSettings.dwell_time_ms;
         }
         if (settings.devices) {
           this.scannerStatus.gain = settings.devices.gain;
         }
       }
+    },
+
+    async saveSettings() {
+      const data = await this.apiFetch('/api/settings', {
+        method: 'PUT',
+        body: JSON.stringify(this.editSettings),
+      });
+      if (data) {
+        this.showToast('Settings saved. Changes take effect on next scan cycle.', 'success');
+        await this.fetchStatus();
+      }
+    },
+
+    addScanRange() {
+      this.editSettings.scan_ranges.push({ label: '', start_mhz: 0, end_mhz: 0 });
+    },
+
+    removeScanRange(index) {
+      this.editSettings.scan_ranges.splice(index, 1);
     },
 
     async fetchAnalytics() {
