@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import datetime, timezone
 
@@ -101,10 +102,15 @@ class Database:
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
         self._conn: aiosqlite.Connection | None = None
+        self._lock: asyncio.Lock | None = None
 
     async def initialize(self) -> None:
+        self._lock = asyncio.Lock()
         self._conn = await aiosqlite.connect(self._db_path)
         self._conn.row_factory = aiosqlite.Row
+        # WAL mode allows concurrent reads while writing
+        await self._conn.execute("PRAGMA journal_mode=WAL")
+        await self._conn.execute("PRAGMA busy_timeout=5000")
         await self._conn.executescript(_SCHEMA)
         await self._conn.commit()
 

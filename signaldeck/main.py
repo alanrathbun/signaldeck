@@ -90,15 +90,37 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
 
         from datetime import datetime, timezone
         from signaldeck.storage.models import Signal, ActivityEntry
+        from signaldeck.engine.classifier import SignalClassifier
+        from signaldeck.decoders.base import SignalInfo
+
+        classifier = SignalClassifier()
+
+        # WebSocket broadcast (only when dashboard is running)
+        ws_broadcast = None
+        if not headless:
+            try:
+                from signaldeck.api.websocket.live_signals import broadcast, signal_broadcast
+                ws_broadcast = (broadcast, signal_broadcast)
+            except ImportError:
+                pass
 
         async def on_signals(signals):
             now = datetime.now(timezone.utc)
             for sig in signals:
+                # Classify the signal
+                signal_info = SignalInfo(
+                    frequency_hz=sig.frequency_hz,
+                    bandwidth_hz=sig.bandwidth_hz,
+                    peak_power=sig.peak_power,
+                    modulation="unknown",
+                )
+                classified = classifier.classify(signal_info)
+
                 db_signal = Signal(
                     frequency=sig.frequency_hz,
                     bandwidth=sig.bandwidth_hz,
-                    modulation="unknown",
-                    protocol=None,
+                    modulation=classified.modulation,
+                    protocol=classified.protocol_hint or None,
                     first_seen=now,
                     last_seen=now,
                     hit_count=1,
@@ -106,18 +128,31 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                     confidence=0.0,
                 )
                 signal_id = await db.upsert_signal(db_signal)
+
+                proto_label = classified.protocol_hint or classified.modulation
                 entry = ActivityEntry(
                     signal_id=signal_id,
                     timestamp=now,
                     duration=cfg["scanner"]["dwell_time_ms"] / 1000.0,
                     strength=sig.peak_power,
                     decoder_used=None,
-                    result_type="unknown",
-                    summary=f"Signal at {sig.frequency_hz / 1e6:.3f} MHz, "
-                            f"{sig.peak_power:.1f} dBFS",
+                    result_type=classified.protocol_hint or "unknown",
+                    summary=f"{sig.frequency_hz / 1e6:.3f} MHz "
+                            f"[{proto_label}] {sig.peak_power:.1f} dBFS",
                 )
                 await db.insert_activity(entry)
-            logger.info("Logged %d signals to database", len(signals))
+
+                # Broadcast to WebSocket clients
+                if ws_broadcast:
+                    broadcast_fn, msg_fn = ws_broadcast
+                    msg = msg_fn(
+                        frequency_hz=sig.frequency_hz,
+                        bandwidth_hz=sig.bandwidth_hz,
+                        power=sig.peak_power,
+                        modulation=classified.modulation,
+                        protocol=classified.protocol_hint,
+                    )
+                    await broadcast_fn(msg)
 
         logger.info("Starting sweep across %d range(s)...", len(ranges))
         try:

@@ -4,19 +4,35 @@ from signaldeck.api.server import get_db
 router = APIRouter()
 
 @router.get("/signals")
-async def list_signals():
+async def list_signals(limit: int = Query(default=200, ge=1, le=5000),
+                       sort: str = Query(default="hit_count")):
     db = get_db()
     signals = await db.get_all_signals()
+    # Sort by requested field
+    if sort == "hit_count":
+        signals.sort(key=lambda s: s.hit_count, reverse=True)
+    elif sort == "frequency":
+        signals.sort(key=lambda s: s.frequency)
+    elif sort == "last_seen":
+        signals.sort(key=lambda s: s.last_seen, reverse=True)
+    elif sort == "avg_strength":
+        signals.sort(key=lambda s: s.avg_strength, reverse=True)
+    signals = signals[:limit]
     return [
         {
+            "id": s.id,
+            "frequency": s.frequency,
             "frequency_hz": s.frequency,
-            "frequency_mhz": s.frequency / 1_000_000,
+            "frequency_mhz": round(s.frequency / 1e6, 4),
+            "bandwidth": s.bandwidth,
             "bandwidth_hz": s.bandwidth,
             "modulation": s.modulation,
             "protocol": s.protocol,
             "first_seen": s.first_seen.isoformat(),
             "last_seen": s.last_seen.isoformat(),
+            "hits": s.hit_count,
             "hit_count": s.hit_count,
+            "power": s.avg_strength,
             "avg_strength": s.avg_strength,
             "confidence": s.confidence,
         }

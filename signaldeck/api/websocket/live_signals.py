@@ -11,8 +11,10 @@ _clients: set[WebSocket] = set()
 def signal_broadcast(frequency_hz, bandwidth_hz, power, modulation="unknown", protocol=None):
     return {
         "type": "signal",
+        "frequency": frequency_hz,
         "frequency_hz": frequency_hz,
         "frequency_mhz": round(frequency_hz / 1e6, 4),
+        "bandwidth": bandwidth_hz,
         "bandwidth_hz": bandwidth_hz,
         "power": power,
         "modulation": modulation,
