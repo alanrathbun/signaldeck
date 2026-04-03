@@ -54,6 +54,7 @@ function dashboard() {
 
     // --- Scanner Status / Settings ---
     scannerStatus: {},
+    settings: {},
 
     // --- Map ---
     signalMap: null,
@@ -360,10 +361,26 @@ function dashboard() {
     },
 
     async fetchStatus() {
-      const data = await this.apiFetch('/api/scanner/status');
-      if (data) {
-        this.scannerStatus = data;
-        this.scanning = !!data.scanning;
+      const [status, settings] = await Promise.all([
+        this.apiFetch('/api/scanner/status'),
+        this.apiFetch('/api/settings'),
+      ]);
+      if (status) {
+        this.scannerStatus = { ...this.scannerStatus, ...status };
+        this.scanning = status.status === 'running';
+      }
+      if (settings) {
+        this.settings = settings;
+        // Merge scanner config into scannerStatus for the template
+        if (settings.scanner) {
+          this.scannerStatus.scan_ranges = settings.scanner.sweep_ranges || [];
+          this.scannerStatus.squelch_offset = settings.scanner.squelch_offset;
+          this.scannerStatus.fft_size = settings.scanner.fft_size;
+          this.scannerStatus.dwell_time_ms = settings.scanner.dwell_time_ms;
+        }
+        if (settings.devices) {
+          this.scannerStatus.gain = settings.devices.gain;
+        }
       }
     },
 

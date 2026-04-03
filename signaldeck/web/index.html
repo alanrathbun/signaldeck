@@ -502,6 +502,56 @@
           </div>
         </div>
 
+        <!-- Audio Settings -->
+        <div class="card">
+          <div class="card-header">
+            <h3>Audio</h3>
+          </div>
+          <div class="settings-list">
+            <div class="setting-row">
+              <span class="setting-label">Sample Rate</span>
+              <span class="setting-value" x-text="settings.audio ? settings.audio.sample_rate + ' Hz' : '--'"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Recording Directory</span>
+              <span class="setting-value" x-text="settings.audio ? settings.audio.recording_dir : '--'"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Format</span>
+              <span class="setting-value" x-text="settings.audio ? settings.audio.format.toUpperCase() : '--'"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Storage -->
+        <div class="card">
+          <div class="card-header">
+            <h3>Storage</h3>
+          </div>
+          <div class="settings-list">
+            <div class="setting-row">
+              <span class="setting-label">Database Path</span>
+              <span class="setting-value" x-text="settings.storage ? settings.storage.database_path : '--'"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Authentication -->
+        <div class="card">
+          <div class="card-header">
+            <h3>Authentication</h3>
+          </div>
+          <div class="settings-list">
+            <div class="setting-row">
+              <span class="setting-label">Status</span>
+              <span class="setting-value">
+                <span class="badge" :class="settings.auth && settings.auth.enabled ? 'badge-green' : 'badge-orange'"
+                      x-text="settings.auth && settings.auth.enabled ? 'Enabled' : 'Disabled'"></span>
+              </span>
+            </div>
+          </div>
+        </div>
+
         <!-- Analytics -->
         <div class="card">
           <div class="card-header">
