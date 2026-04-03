@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from signaldeck.api.server import get_db
 
 router = APIRouter()
@@ -21,4 +21,19 @@ async def list_signals():
             "confidence": s.confidence,
         }
         for s in signals
+    ]
+
+@router.get("/activity")
+async def list_activity(limit: int = Query(default=50, ge=1, le=1000)):
+    db = get_db()
+    entries = await db.get_recent_activity(limit=limit)
+    return [
+        {
+            "id": e.id, "signal_id": e.signal_id,
+            "timestamp": e.timestamp.isoformat(), "duration": e.duration,
+            "strength": e.strength, "decoder_used": e.decoder_used,
+            "result_type": e.result_type, "summary": e.summary,
+            "audio_path": e.audio_path,
+        }
+        for e in entries
     ]
