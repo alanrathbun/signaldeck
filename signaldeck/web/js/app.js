@@ -61,6 +61,12 @@ function dashboard() {
     // --- Charts ---
     charts: null,
 
+    // --- Auth ---
+    authenticated: false,
+    authRequired: false,
+    apiToken: localStorage.getItem('signaldeck_token') || null,
+    loginError: '',
+
     // --- Toasts ---
     toasts: [],
     toastCounter: 0,
@@ -82,6 +88,9 @@ function dashboard() {
       if (hash && ['live', 'signals', 'activity', 'recordings', 'bookmarks', 'map', 'settings'].includes(hash)) {
         this.currentPage = hash;
       }
+
+      // Check auth before anything else
+      await this.checkAuth();
 
       // Connect WebSockets
       this.connectWebSockets();
@@ -244,14 +253,84 @@ function dashboard() {
     },
 
     // =====================================================
+    // Auth
+    // =====================================================
+    authHeaders() {
+      if (this.apiToken) {
+        return { 'Authorization': 'Bearer ' + this.apiToken };
+      }
+      return {};
+    },
+
+    async checkAuth() {
+      // Health endpoint is always accessible — use /api/signals to probe for auth
+      try {
+        const resp = await fetch('/api/signals', { headers: this.authHeaders() });
+        if (resp.status === 401) {
+          this.authRequired = true;
+          this.authenticated = false;
+        } else {
+          this.authRequired = false;
+          this.authenticated = true;
+        }
+      } catch (err) {
+        // Network error: assume no auth required
+        this.authenticated = true;
+      }
+    },
+
+    async login(username, password) {
+      this.loginError = '';
+      try {
+        const resp = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+        });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          this.loginError = err.detail || 'Invalid credentials';
+          return;
+        }
+        const data = await resp.json();
+        const token = data.api_token || data.session_token;
+        this.apiToken = token;
+        localStorage.setItem('signaldeck_token', token);
+        // Also set as cookie for session-based auth
+        document.cookie = `session_token=${token}; path=/; SameSite=Strict`;
+        this.authenticated = true;
+        this.authRequired = false;
+        this.loginError = '';
+        // Load initial data now that we're authenticated
+        this.fetchPageData();
+      } catch (err) {
+        this.loginError = 'Login failed: ' + err.message;
+      }
+    },
+
+    logout() {
+      this.apiToken = null;
+      localStorage.removeItem('signaldeck_token');
+      // Clear the cookie
+      document.cookie = 'session_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+      this.authenticated = false;
+      this.authRequired = true;
+    },
+
+    // =====================================================
     // API Calls
     // =====================================================
     async apiFetch(url, options = {}) {
       try {
         const resp = await fetch(url, {
-          headers: { 'Content-Type': 'application/json', ...options.headers },
+          headers: { 'Content-Type': 'application/json', ...this.authHeaders(), ...options.headers },
           ...options,
         });
+        if (resp.status === 401) {
+          this.authRequired = true;
+          this.authenticated = false;
+          return null;
+        }
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         return await resp.json();
       } catch (err) {

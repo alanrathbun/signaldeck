@@ -38,3 +38,7 @@ storage:
 
 logging:
   level: "INFO"
+
+auth:
+  enabled: false  # set to true to require login
+  credentials_path: "config/credentials.yaml"
