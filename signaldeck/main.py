@@ -22,32 +22,44 @@ def cli() -> None:
     """SignalDeck — SDR scanner, classifier, and decoder platform."""
 
 
-async def _stream_audio(device, frequency_hz: float, send_fn, sample_rate: float = 2_000_000,
-                        duration_s: float = 0.5) -> None:
-    """Tune to a frequency, demodulate FM, and stream audio via WebSocket.
+async def _stream_audio(device, frequency_hz: float, send_fn, audio_request_fn,
+                        sample_rate: float = 2_000_000,
+                        chunk_duration_s: float = 0.1) -> None:
+    """Tune to a frequency and continuously stream demodulated FM audio.
 
-    Captures `duration_s` seconds of IQ, demodulates, and sends as PCM.
+    Keeps streaming until the audio request becomes inactive.
     """
     import numpy as np
     from signaldeck.engine.audio_pipeline import fm_demodulate
 
-    num_samples = int(sample_rate * duration_s)
+    num_samples = int(sample_rate * chunk_duration_s)
     device.tune(frequency_hz)
     await asyncio.sleep(0.01)  # settle time
 
     device.start_stream()
-    samples = device.read_samples(num_samples)
-    device.stop_stream()
+    try:
+        while True:
+            # Check if still requested
+            req = audio_request_fn()
+            if not req.get("active") or req.get("frequency_hz") != frequency_hz:
+                break
 
-    if samples is None or len(samples) < 1000:
-        return
+            samples = device.read_samples(num_samples)
+            if samples is None or len(samples) < 1000:
+                await asyncio.sleep(0.01)
+                continue
 
-    # FM demodulate to 48 kHz audio
-    audio = fm_demodulate(samples, sample_rate=sample_rate, audio_rate=48000)
+            # FM demodulate to 48 kHz audio
+            audio = fm_demodulate(samples, sample_rate=sample_rate, audio_rate=48000)
 
-    # Convert to 16-bit PCM bytes
-    pcm16 = (np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16)
-    await send_fn(frequency_hz, pcm16.tobytes())
+            # Convert to 16-bit PCM bytes
+            pcm16 = (np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16)
+            await send_fn(frequency_hz, pcm16.tobytes())
+
+            # Yield to event loop
+            await asyncio.sleep(0)
+    finally:
+        device.stop_stream()
 
 
 @cli.command()
@@ -65,6 +77,7 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
     logger.info("SignalDeck v%s starting...", __version__)
 
     from signaldeck.engine.device_manager import DeviceManager
+    from signaldeck.engine.gqrx_device import GqrxDevice
     from signaldeck.engine.scanner import FrequencyScanner, ScanRange
     from signaldeck.storage.database import Database
 
@@ -87,24 +100,37 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
             web_task = asyncio.create_task(server.serve())
             logger.info("Web dashboard at http://%s:%d", host, port)
 
-        # Discover devices (skip audio devices, prefer SDR hardware)
+        # Discover devices (SoapySDR + gqrx)
         mgr = DeviceManager()
-        available = mgr.enumerate()
+        gqrx_cfg = cfg.get("devices", {})
+        available = await mgr.enumerate_async(
+            gqrx_auto_detect=gqrx_cfg.get("gqrx_auto_detect", True),
+            gqrx_instances=gqrx_cfg.get("gqrx_instances", []),
+        )
         sdr_devices = [d for d in available if d.driver not in ("audio",)]
         if not sdr_devices:
-            logger.error("No SDR devices found. Connect a HackRF or RTL-SDR and try again.")
-            logger.error("Detected non-SDR devices: %s",
-                         ", ".join(d.label for d in available) if available else "none")
+            logger.error("No SDR devices found. Connect a HackRF/RTL-SDR or start gqrx with remote control enabled.")
             if web_task:
                 web_task.cancel()
             await db.close()
             return
 
-        logger.info("Found %d SDR device(s): %s", len(sdr_devices),
+        logger.info("Found %d device(s): %s", len(sdr_devices),
                      ", ".join(f"{d.label} ({d.driver})" for d in sdr_devices))
-        device = mgr.open(driver=sdr_devices[0].driver,
-                          serial=sdr_devices[0].serial)
-        device.set_gain(cfg["devices"]["gain"])
+
+        # Prefer gqrx if available, otherwise use first SoapySDR device
+        chosen = next((d for d in sdr_devices if d.driver == "gqrx"), sdr_devices[0])
+
+        if chosen.driver == "gqrx":
+            host, port_str = chosen.serial.split(":")
+            device = await mgr.open_gqrx(host=host, port=int(port_str))
+        else:
+            device = mgr.open(driver=chosen.driver, serial=chosen.serial)
+            device.set_gain(cfg["devices"]["gain"])
+
+        is_gqrx = isinstance(device, GqrxDevice)
+        if is_gqrx:
+            logger.info("Using gqrx backend at %s", chosen.serial)
 
         # Build scan ranges
         ranges = [ScanRange.from_config(r) for r in cfg["scanner"]["sweep_ranges"]]
@@ -125,6 +151,7 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
 
         # WebSocket broadcast (only when dashboard is running)
         ws_broadcast = None
+        fft_broadcast_fn = None
         audio_stream_fn = None
         audio_request_fn = None
         if not headless:
@@ -139,10 +166,20 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                 audio_request_fn = get_audio_request
             except ImportError:
                 pass
+            try:
+                from signaldeck.api.websocket.waterfall import broadcast_fft, fft_broadcast
+                fft_broadcast_fn = (broadcast_fft, fft_broadcast)
+            except ImportError:
+                pass
+
+        min_strength = cfg["scanner"].get("min_signal_strength", -50)
 
         async def on_signals(signals):
             now = datetime.now(timezone.utc)
             for sig in signals:
+                # Filter out weak signals below the minimum strength threshold
+                if sig.peak_power < min_strength:
+                    continue
                 # Classify the signal
                 signal_info = SignalInfo(
                     frequency_hz=sig.frequency_hz,
@@ -190,24 +227,45 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                     )
                     await broadcast_fn(msg)
 
+        # FFT broadcast callback for waterfall display
+        async def on_fft(center_freq_hz, sample_rate, power_db):
+            if fft_broadcast_fn:
+                bcast_fn, msg_fn = fft_broadcast_fn
+                msg = msg_fn(center_freq_hz, sample_rate, power_db)
+                await bcast_fn(msg)
+
         logger.info("Starting sweep across %d range(s)...", len(ranges))
         try:
             while True:
-                # Check if audio streaming is requested
-                if audio_request_fn:
-                    audio_req = audio_request_fn()
-                    if audio_req.get("active") and audio_req.get("frequency_hz"):
-                        await _stream_audio(device, audio_req["frequency_hz"],
-                                            audio_stream_fn, sample_rate=2_000_000)
+                if is_gqrx:
+                    # gqrx mode: strength-based scanning, no audio streaming
+                    # (gqrx handles audio output directly)
+                    signals = await scanner.strength_sweep_once(fft_callback=on_fft)
+                    if signals:
+                        await on_signals(signals)
+                else:
+                    # SoapySDR mode: IQ-based scanning with optional audio
+                    if audio_request_fn:
+                        audio_req = audio_request_fn()
+                        if audio_req.get("active") and audio_req.get("frequency_hz"):
+                            logger.info("Audio streaming: tuning to %.3f MHz",
+                                        audio_req["frequency_hz"] / 1e6)
+                            await _stream_audio(device, audio_req["frequency_hz"],
+                                                audio_stream_fn, audio_request_fn,
+                                                sample_rate=2_000_000)
+                            logger.info("Audio streaming ended, resuming scan")
+                            continue
 
-                # Run one sweep cycle
-                signals = await scanner.sweep_once()
-                if signals:
-                    await on_signals(signals)
+                    signals = await scanner.sweep_once(fft_callback=on_fft)
+                    if signals:
+                        await on_signals(signals)
         except KeyboardInterrupt:
             pass
         finally:
-            device.close()
+            if is_gqrx:
+                await device.close()
+            else:
+                device.close()
             await db.close()
             if web_task:
                 web_task.cancel()
