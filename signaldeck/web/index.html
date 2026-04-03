@@ -41,14 +41,6 @@
         <svg viewBox="0 0 20 20" width="16" height="16"><circle cx="10" cy="10" r="3" fill="currentColor"/><path d="M6 6a5.7 5.7 0 0 1 8 0" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M4 4a8.5 8.5 0 0 1 12 0" stroke="currentColor" stroke-width="1.5" fill="none" opacity="0.5"/></svg>
         Live
       </a>
-      <a href="#" :class="{ active: currentPage === 'signals' }" @click.prevent="navigate('signals')">
-        <svg viewBox="0 0 20 20" width="16" height="16"><rect x="2" y="12" width="3" height="6" rx="1" fill="currentColor"/><rect x="7" y="8" width="3" height="10" rx="1" fill="currentColor"/><rect x="12" y="4" width="3" height="14" rx="1" fill="currentColor"/><rect x="17" y="2" width="3" height="16" rx="1" fill="currentColor" opacity="0.5"/></svg>
-        Signals
-      </a>
-      <a href="#" :class="{ active: currentPage === 'activity' }" @click.prevent="navigate('activity')">
-        <svg viewBox="0 0 20 20" width="16" height="16"><polyline points="2,14 6,6 10,10 14,4 18,8" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        Activity
-      </a>
       <a href="#" :class="{ active: currentPage === 'recordings' }" @click.prevent="navigate('recordings')">
         <svg viewBox="0 0 20 20" width="16" height="16"><circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="10" cy="10" r="3" fill="currentColor"/></svg>
         Recordings
@@ -172,7 +164,18 @@
                  placeholder="Min dBFS" title="Minimum signal strength" style="width:100px">
           <input type="text" class="form-input filter-select" x-model="liveFilterFreq"
                  placeholder="Freq MHz" title="Filter by frequency (e.g. 162 or 88-108)" style="width:110px">
-          <button class="btn btn-small" @click="clearLiveFilters()" x-show="liveFilterMod || liveFilterProto || liveFilterMinPower || liveFilterFreq">Clear</button>
+          <select class="form-select filter-select" x-model="liveFilterDecoder" title="Filter by decoder">
+            <option value="">All Decoders</option>
+            <template x-for="dec in liveDecoders" :key="dec">
+              <option :value="dec" x-text="dec"></option>
+            </template>
+          </select>
+          <input type="number" class="form-input filter-select" x-model.number="liveFilterBandwidthMin"
+                 placeholder="BW min Hz" title="Minimum bandwidth (Hz)" style="width:100px">
+          <input type="number" class="form-input filter-select" x-model.number="liveFilterBandwidthMax"
+                 placeholder="BW max Hz" title="Maximum bandwidth (Hz)" style="width:100px">
+          <button class="btn btn-small" @click="clearLiveFilters()"
+            x-show="liveFilterMod || liveFilterProto || liveFilterMinPower || liveFilterFreq || liveFilterDecoder || liveFilterBandwidthMin || liveFilterBandwidthMax">Clear</button>
         </div>
 
         <div class="table-wrap">
@@ -191,7 +194,15 @@
                   Protocol <span x-text="liveSortIcon('protocol')"></span></th>
                 <th x-show="liveVisibleCols.includes('hits')">Hits</th>
                 <th x-show="liveVisibleCols.includes('last_seen')">Last Seen</th>
-                <th x-show="liveVisibleCols.includes('summary')">Summary</th>
+                <th x-show="liveVisibleCols.includes('first_seen')" @click="sortLive('first_seen')" class="sortable-th">
+                  First Seen <span x-text="liveSortIcon('first_seen')"></span></th>
+                <th x-show="liveVisibleCols.includes('confidence')" @click="sortLive('confidence')" class="sortable-th">
+                  Confidence <span x-text="liveSortIcon('confidence')"></span></th>
+                <th x-show="liveVisibleCols.includes('decoder')" @click="sortLive('decoder')" class="sortable-th">
+                  Decoder <span x-text="liveSortIcon('decoder')"></span></th>
+                <th x-show="liveVisibleCols.includes('activity_type')" @click="sortLive('activity_type')" class="sortable-th">
+                  Activity <span x-text="liveSortIcon('activity_type')"></span></th>
+                <th x-show="liveVisibleCols.includes('activity_summary')">Last Activity</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -211,8 +222,11 @@
                   <td x-show="liveVisibleCols.includes('protocol')" x-text="sig.protocol || '--'"></td>
                   <td x-show="liveVisibleCols.includes('hits')" x-text="sig._hits || 1"></td>
                   <td x-show="liveVisibleCols.includes('last_seen')" x-text="sig._updated ? new Date(sig._updated).toLocaleTimeString() : '--'"></td>
-                  <td x-show="liveVisibleCols.includes('summary')" class="summary-cell"
-                      x-text="(sig.protocol || sig.modulation || '') + ' ' + formatFreq(sig.frequency)"></td>
+                  <td x-show="liveVisibleCols.includes('first_seen')" x-text="sig.first_seen ? formatTime(sig.first_seen) : '--'"></td>
+                  <td x-show="liveVisibleCols.includes('confidence')" x-text="sig.confidence ? (sig.confidence * 100).toFixed(0) + '%' : '--'"></td>
+                  <td x-show="liveVisibleCols.includes('decoder')"><span class="badge badge-blue" x-show="sig.decoder" x-text="sig.decoder"></span><span x-show="!sig.decoder">--</span></td>
+                  <td x-show="liveVisibleCols.includes('activity_type')" x-text="sig.activity_type || '--'"></td>
+                  <td x-show="liveVisibleCols.includes('activity_summary')" class="summary-cell" x-text="sig.activity_summary || '--'"></td>
                   <td class="action-buttons">
                     <button class="btn btn-sm btn-primary" @click="tuneAndListen(sig.frequency)" title="Listen">
                       <svg viewBox="0 0 20 20" width="12" height="12"><polygon points="4,2 18,10 4,18" fill="currentColor"/></svg>
@@ -232,120 +246,6 @@
       </div>
     </section>
 
-    <!-- ==================== SIGNALS ==================== -->
-    <section x-show="currentPage === 'signals'" x-cloak>
-      <div class="page-header">
-        <h1>Known Signals</h1>
-        <button class="btn btn-primary" @click="fetchSignals()">Refresh</button>
-      </div>
-
-      <div class="card">
-        <div class="table-wrap">
-          <table class="data-table sortable">
-            <thead>
-              <tr>
-                <th @click="sortSignals('frequency')" class="sortable-th">
-                  Frequency (MHz) <span x-text="sortIcon('frequency')"></span>
-                </th>
-                <th @click="sortSignals('bandwidth')" class="sortable-th">
-                  Bandwidth <span x-text="sortIcon('bandwidth')"></span>
-                </th>
-                <th @click="sortSignals('modulation')" class="sortable-th">
-                  Modulation <span x-text="sortIcon('modulation')"></span>
-                </th>
-                <th @click="sortSignals('protocol')" class="sortable-th">
-                  Protocol <span x-text="sortIcon('protocol')"></span>
-                </th>
-                <th @click="sortSignals('first_seen')" class="sortable-th">
-                  First Seen <span x-text="sortIcon('first_seen')"></span>
-                </th>
-                <th @click="sortSignals('last_seen')" class="sortable-th">
-                  Last Seen <span x-text="sortIcon('last_seen')"></span>
-                </th>
-                <th @click="sortSignals('hits')" class="sortable-th">
-                  Hits <span x-text="sortIcon('hits')"></span>
-                </th>
-                <th @click="sortSignals('power')" class="sortable-th">
-                  Strength <span x-text="sortIcon('power')"></span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <template x-for="sig in sortedSignals" :key="sig.id || sig.frequency">
-                <tr>
-                  <td class="freq-cell clickable" @click="navigate('live'); tuneFrequency(sig.frequency)" x-text="formatFreq(sig.frequency)"></td>
-                  <td x-text="sig.bandwidth ? (sig.bandwidth / 1000).toFixed(1) + ' kHz' : '--'"></td>
-                  <td><span class="badge" :class="modBadge(sig.modulation)" x-text="sig.modulation || '--'"></span></td>
-                  <td x-text="sig.protocol || '--'"></td>
-                  <td x-text="formatTime(sig.first_seen)"></td>
-                  <td x-text="formatTime(sig.last_seen)"></td>
-                  <td x-text="sig.hits || 0"></td>
-                  <td>
-                    <div class="power-indicator">
-                      <div class="power-bar" :style="'width:' + powerPct(sig.power) + '%;background:' + powerColor(sig.power)"></div>
-                      <span class="power-label" x-text="formatPower(sig.power)"></span>
-                    </div>
-                  </td>
-                </tr>
-              </template>
-              <tr x-show="signals.length === 0">
-                <td colspan="8" class="empty-state">No signals recorded yet.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </section>
-
-    <!-- ==================== ACTIVITY ==================== -->
-    <section x-show="currentPage === 'activity'" x-cloak>
-      <div class="page-header">
-        <h1>Activity Log</h1>
-        <div class="header-controls">
-          <select class="form-select" x-model.number="activityLimit" @change="fetchActivity()">
-            <option value="25">25 entries</option>
-            <option value="50">50 entries</option>
-            <option value="100">100 entries</option>
-            <option value="500">500 entries</option>
-          </select>
-          <label class="toggle-label">
-            <input type="checkbox" x-model="activityAutoRefresh" @change="toggleActivityRefresh()">
-            Auto-refresh
-          </label>
-          <button class="btn btn-primary" @click="fetchActivity()">Refresh</button>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="table-wrap">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Frequency</th>
-                <th>Decoder</th>
-                <th>Type</th>
-                <th>Summary</th>
-              </tr>
-            </thead>
-            <tbody>
-              <template x-for="item in activity" :key="item.id || item.timestamp">
-                <tr>
-                  <td class="time-cell" x-text="formatTime(item.timestamp)"></td>
-                  <td class="freq-cell" x-text="formatFreq(item.frequency)"></td>
-                  <td><span class="badge badge-blue" x-text="item.decoder || '--'"></span></td>
-                  <td x-text="item.type || '--'"></td>
-                  <td class="summary-cell" x-text="item.summary || item.message || '--'"></td>
-                </tr>
-              </template>
-              <tr x-show="activity.length === 0">
-                <td colspan="5" class="empty-state">No activity recorded.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </section>
 
     <!-- ==================== RECORDINGS ==================== -->
     <section x-show="currentPage === 'recordings'" x-cloak>

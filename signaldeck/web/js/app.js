@@ -20,10 +20,15 @@ function dashboard() {
 
     // --- Live Signals ---
     liveSignals: [],
+    signalEnrichment: {},
+    _enrichmentTimer: null,
     liveFilterMod: '',
     liveFilterProto: '',
     liveFilterMinPower: null,
     liveFilterFreq: '',
+    liveFilterDecoder: '',
+    liveFilterBandwidthMin: null,
+    liveFilterBandwidthMax: null,
     liveSortKey: 'power',
     liveSortAsc: false,
     showColumnPicker: false,
@@ -37,19 +42,12 @@ function dashboard() {
       { key: 'protocol', label: 'Protocol' },
       { key: 'hits', label: 'Hits' },
       { key: 'last_seen', label: 'Last Seen' },
-      { key: 'summary', label: 'Summary' },
+      { key: 'first_seen', label: 'First Seen' },
+      { key: 'confidence', label: 'Confidence' },
+      { key: 'decoder', label: 'Decoder' },
+      { key: 'activity_type', label: 'Activity Type' },
+      { key: 'activity_summary', label: 'Last Activity' },
     ],
-
-    // --- Signals Page ---
-    signals: [],
-    signalSortKey: 'frequency',
-    signalSortAsc: true,
-
-    // --- Activity ---
-    activity: [],
-    activityLimit: 50,
-    activityAutoRefresh: false,
-    activityRefreshTimer: null,
 
     // --- Recordings ---
     recordings: [],
@@ -113,7 +111,7 @@ function dashboard() {
     async init() {
       // Restore page from hash
       const hash = window.location.hash.replace('#', '');
-      if (hash && ['live', 'signals', 'activity', 'recordings', 'bookmarks', 'map', 'settings'].includes(hash)) {
+      if (hash && ['live', 'recordings', 'bookmarks', 'map', 'settings'].includes(hash)) {
         this.currentPage = hash;
       }
 
@@ -138,6 +136,10 @@ function dashboard() {
 
       // Fetch scanner status (needed to know if gqrx backend)
       this.fetchStatus();
+
+      // Periodic enrichment sync for database fields
+      this.fetchEnrichment();
+      this._enrichmentTimer = setInterval(() => this.fetchEnrichment(), 10000);
 
       // Fetch initial data for current page
       this.fetchPageData();
@@ -177,8 +179,6 @@ function dashboard() {
 
     fetchPageData() {
       switch (this.currentPage) {
-        case 'signals': this.fetchSignals(); break;
-        case 'activity': this.fetchActivity(); break;
         case 'recordings': this.fetchRecordings(); break;
         case 'bookmarks': this.fetchBookmarks(); break;
         case 'settings': this.fetchStatus(); break;
@@ -371,14 +371,9 @@ function dashboard() {
       }
     },
 
-    async fetchSignals() {
-      const data = await this.apiFetch('/api/signals');
-      if (data) this.signals = Array.isArray(data) ? data : (data.signals || []);
-    },
-
-    async fetchActivity() {
-      const data = await this.apiFetch(`/api/activity?limit=${this.activityLimit}`);
-      if (data) this.activity = Array.isArray(data) ? data : (data.activity || []);
+    async fetchEnrichment() {
+      const data = await this.apiFetch('/api/signals/enrichment');
+      if (data) this.signalEnrichment = data;
     },
 
     async fetchRecordings() {
@@ -529,19 +524,45 @@ function dashboard() {
             if (!mhz.toFixed(3).includes(f)) return false;
           }
         }
+        if (this.liveFilterDecoder) {
+          const freqKey = String(Math.round(s.frequency || 0));
+          const enrich = this.signalEnrichment[freqKey] || {};
+          const activity = enrich.last_activity || {};
+          if ((activity.decoder || '') !== this.liveFilterDecoder) return false;
+        }
+        if (this.liveFilterBandwidthMin && (s.bandwidth || 0) < this.liveFilterBandwidthMin) return false;
+        if (this.liveFilterBandwidthMax && (s.bandwidth || 0) > this.liveFilterBandwidthMax) return false;
         return true;
+      });
+    },
+
+    get enrichedLiveSignals() {
+      return this.filteredLiveSignals.map(sig => {
+        const freqKey = String(Math.round(sig.frequency || 0));
+        const enrich = this.signalEnrichment[freqKey] || {};
+        const activity = enrich.last_activity || {};
+        return {
+          ...sig,
+          first_seen: enrich.first_seen || null,
+          db_hits: enrich.hit_count || 0,
+          confidence: enrich.confidence || 0,
+          decoder: activity.decoder || null,
+          activity_type: activity.type || null,
+          activity_summary: activity.summary || null,
+        };
       });
     },
 
     get sortedLiveSignals() {
       const key = this.liveSortKey;
       const asc = this.liveSortAsc;
-      return [...this.filteredLiveSignals].sort((a, b) => {
+      return [...this.enrichedLiveSignals].sort((a, b) => {
         let va = a[key], vb = b[key];
-        if (key === '_hits') { va = a._hits || 1; vb = b._hits || 1; }
         if (key === 'hits') { va = a._hits || 1; vb = b._hits || 1; }
         if (typeof va === 'string') va = (va || '').toLowerCase();
         if (typeof vb === 'string') vb = (vb || '').toLowerCase();
+        if (va == null) va = '';
+        if (vb == null) vb = '';
         if (va < vb) return asc ? -1 : 1;
         if (va > vb) return asc ? 1 : -1;
         return 0;
@@ -577,6 +598,9 @@ function dashboard() {
       this.liveFilterProto = '';
       this.liveFilterMinPower = null;
       this.liveFilterFreq = '';
+      this.liveFilterDecoder = '';
+      this.liveFilterBandwidthMin = null;
+      this.liveFilterBandwidthMax = null;
     },
 
     get liveModulations() {
@@ -587,6 +611,17 @@ function dashboard() {
     get liveProtocols() {
       const protos = new Set(this.liveSignals.map(s => s.protocol).filter(Boolean));
       return [...protos].sort();
+    },
+
+    get liveDecoders() {
+      const decoders = new Set();
+      for (const s of this.liveSignals) {
+        const freqKey = String(Math.round(s.frequency || 0));
+        const enrich = this.signalEnrichment[freqKey] || {};
+        const decoder = (enrich.last_activity || {}).decoder;
+        if (decoder) decoders.add(decoder);
+      }
+      return [...decoders].sort();
     },
 
     tuneFrequency(freqHz) {
@@ -655,52 +690,6 @@ function dashboard() {
     setAudioVolume(val) {
       this.audioVolume = parseFloat(val);
       if (this.audioPlayer) this.audioPlayer.setVolume(this.audioVolume);
-    },
-
-    // =====================================================
-    // Activity Auto-refresh
-    // =====================================================
-    toggleActivityRefresh() {
-      if (this.activityAutoRefresh) {
-        this.activityRefreshTimer = setInterval(() => {
-          if (this.currentPage === 'activity') this.fetchActivity();
-        }, 5000);
-      } else {
-        clearInterval(this.activityRefreshTimer);
-        this.activityRefreshTimer = null;
-      }
-    },
-
-    // =====================================================
-    // Sorting
-    // =====================================================
-    sortSignals(key) {
-      if (this.signalSortKey === key) {
-        this.signalSortAsc = !this.signalSortAsc;
-      } else {
-        this.signalSortKey = key;
-        this.signalSortAsc = true;
-      }
-    },
-
-    get sortedSignals() {
-      const key = this.signalSortKey;
-      const asc = this.signalSortAsc;
-      return [...this.signals].sort((a, b) => {
-        let va = a[key], vb = b[key];
-        if (va == null) va = '';
-        if (vb == null) vb = '';
-        if (typeof va === 'string') va = va.toLowerCase();
-        if (typeof vb === 'string') vb = vb.toLowerCase();
-        if (va < vb) return asc ? -1 : 1;
-        if (va > vb) return asc ? 1 : -1;
-        return 0;
-      });
-    },
-
-    sortIcon(key) {
-      if (this.signalSortKey !== key) return '';
-      return this.signalSortAsc ? '\u25B2' : '\u25BC';
     },
 
     // =====================================================
