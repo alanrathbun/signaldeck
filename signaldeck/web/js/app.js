@@ -82,7 +82,7 @@ function dashboard() {
     // =====================================================
     // Initialization
     // =====================================================
-    init() {
+    async init() {
       // Restore page from hash
       const hash = window.location.hash.replace('#', '');
       if (hash && ['live', 'signals', 'activity', 'recordings', 'bookmarks', 'map', 'settings'].includes(hash)) {
