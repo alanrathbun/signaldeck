@@ -1,0 +1,253 @@
+import json
+from datetime import datetime, timezone
+
+import aiosqlite
+
+from signaldeck.storage.models import Signal, ActivityEntry
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS signals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    frequency REAL NOT NULL,
+    bandwidth REAL NOT NULL,
+    modulation TEXT NOT NULL,
+    protocol TEXT,
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    hit_count INTEGER NOT NULL DEFAULT 1,
+    avg_strength REAL NOT NULL,
+    confidence REAL NOT NULL DEFAULT 0.0,
+    classification_data TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_signals_frequency ON signals(frequency);
+
+CREATE TABLE IF NOT EXISTS activity_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    signal_id INTEGER NOT NULL,
+    timestamp TEXT NOT NULL,
+    duration REAL NOT NULL,
+    strength REAL NOT NULL,
+    decoder_used TEXT,
+    result_type TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    audio_path TEXT,
+    raw_result TEXT NOT NULL DEFAULT '{}',
+    FOREIGN KEY (signal_id) REFERENCES signals(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_timestamp ON activity_log(timestamp);
+
+CREATE TABLE IF NOT EXISTS bookmarks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    frequency REAL NOT NULL,
+    label TEXT NOT NULL,
+    modulation TEXT NOT NULL,
+    decoder TEXT,
+    priority INTEGER NOT NULL DEFAULT 3,
+    camp_on_active INTEGER NOT NULL DEFAULT 0,
+    notes TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS recordings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    activity_id INTEGER,
+    signal_id INTEGER,
+    frequency REAL NOT NULL,
+    timestamp TEXT NOT NULL,
+    duration REAL NOT NULL,
+    format TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    file_size INTEGER NOT NULL,
+    transcription TEXT,
+    FOREIGN KEY (activity_id) REFERENCES activity_log(id),
+    FOREIGN KEY (signal_id) REFERENCES signals(id)
+);
+
+CREATE TABLE IF NOT EXISTS learned_patterns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    signal_id INTEGER NOT NULL,
+    day_of_week INTEGER NOT NULL,
+    hour_start INTEGER NOT NULL,
+    hour_end INTEGER NOT NULL,
+    avg_activity_minutes REAL NOT NULL DEFAULT 0.0,
+    last_updated TEXT NOT NULL,
+    FOREIGN KEY (signal_id) REFERENCES signals(id)
+);
+
+CREATE TABLE IF NOT EXISTS decoder_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    activity_id INTEGER NOT NULL,
+    decoder TEXT NOT NULL,
+    protocol TEXT NOT NULL,
+    result_type TEXT NOT NULL,
+    content TEXT NOT NULL DEFAULT '{}',
+    timestamp TEXT NOT NULL,
+    FOREIGN KEY (activity_id) REFERENCES activity_log(id)
+);
+"""
+
+
+def _dt_to_str(dt: datetime) -> str:
+    return dt.isoformat()
+
+
+def _str_to_dt(s: str) -> datetime:
+    return datetime.fromisoformat(s)
+
+
+class Database:
+    def __init__(self, db_path: str) -> None:
+        self._db_path = db_path
+        self._conn: aiosqlite.Connection | None = None
+
+    async def initialize(self) -> None:
+        self._conn = await aiosqlite.connect(self._db_path)
+        self._conn.row_factory = aiosqlite.Row
+        await self._conn.executescript(_SCHEMA)
+        await self._conn.commit()
+
+    async def close(self) -> None:
+        if self._conn:
+            await self._conn.close()
+            self._conn = None
+
+    async def list_tables(self) -> list[str]:
+        cursor = await self._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+        )
+        rows = await cursor.fetchall()
+        return [row["name"] for row in rows]
+
+    async def upsert_signal(self, signal: Signal) -> int:
+        existing = await self.get_signal_by_frequency(signal.frequency, tolerance_hz=1000)
+        if existing and existing.id is not None:
+            await self._conn.execute(
+                """UPDATE signals
+                   SET hit_count = hit_count + 1,
+                       last_seen = ?,
+                       avg_strength = ?,
+                       modulation = ?,
+                       protocol = COALESCE(?, protocol),
+                       confidence = MAX(confidence, ?)
+                   WHERE id = ?""",
+                (
+                    _dt_to_str(signal.last_seen),
+                    signal.avg_strength,
+                    signal.modulation,
+                    signal.protocol,
+                    signal.confidence,
+                    existing.id,
+                ),
+            )
+            await self._conn.commit()
+            return existing.id
+
+        cursor = await self._conn.execute(
+            """INSERT INTO signals
+               (frequency, bandwidth, modulation, protocol, first_seen, last_seen,
+                hit_count, avg_strength, confidence, classification_data)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                signal.frequency,
+                signal.bandwidth,
+                signal.modulation,
+                signal.protocol,
+                _dt_to_str(signal.first_seen),
+                _dt_to_str(signal.last_seen),
+                signal.hit_count,
+                signal.avg_strength,
+                signal.confidence,
+                json.dumps(signal.classification_data),
+            ),
+        )
+        await self._conn.commit()
+        return cursor.lastrowid
+
+    async def get_signal_by_frequency(
+        self, frequency: float, tolerance_hz: float = 1000
+    ) -> Signal | None:
+        cursor = await self._conn.execute(
+            "SELECT * FROM signals WHERE ABS(frequency - ?) <= ? LIMIT 1",
+            (frequency, tolerance_hz),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return Signal(
+            id=row["id"],
+            frequency=row["frequency"],
+            bandwidth=row["bandwidth"],
+            modulation=row["modulation"],
+            protocol=row["protocol"],
+            first_seen=_str_to_dt(row["first_seen"]),
+            last_seen=_str_to_dt(row["last_seen"]),
+            hit_count=row["hit_count"],
+            avg_strength=row["avg_strength"],
+            confidence=row["confidence"],
+            classification_data=json.loads(row["classification_data"]),
+        )
+
+    async def get_all_signals(self) -> list[Signal]:
+        cursor = await self._conn.execute("SELECT * FROM signals ORDER BY frequency")
+        rows = await cursor.fetchall()
+        return [
+            Signal(
+                id=row["id"],
+                frequency=row["frequency"],
+                bandwidth=row["bandwidth"],
+                modulation=row["modulation"],
+                protocol=row["protocol"],
+                first_seen=_str_to_dt(row["first_seen"]),
+                last_seen=_str_to_dt(row["last_seen"]),
+                hit_count=row["hit_count"],
+                avg_strength=row["avg_strength"],
+                confidence=row["confidence"],
+                classification_data=json.loads(row["classification_data"]),
+            )
+            for row in rows
+        ]
+
+    async def insert_activity(self, entry: ActivityEntry) -> int:
+        cursor = await self._conn.execute(
+            """INSERT INTO activity_log
+               (signal_id, timestamp, duration, strength, decoder_used,
+                result_type, summary, audio_path, raw_result)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                entry.signal_id,
+                _dt_to_str(entry.timestamp),
+                entry.duration,
+                entry.strength,
+                entry.decoder_used,
+                entry.result_type,
+                entry.summary,
+                entry.audio_path,
+                json.dumps(entry.raw_result),
+            ),
+        )
+        await self._conn.commit()
+        return cursor.lastrowid
+
+    async def get_recent_activity(self, limit: int = 50) -> list[ActivityEntry]:
+        cursor = await self._conn.execute(
+            "SELECT * FROM activity_log ORDER BY timestamp DESC LIMIT ?",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [
+            ActivityEntry(
+                id=row["id"],
+                signal_id=row["signal_id"],
+                timestamp=_str_to_dt(row["timestamp"]),
+                duration=row["duration"],
+                strength=row["strength"],
+                decoder_used=row["decoder_used"],
+                result_type=row["result_type"],
+                summary=row["summary"],
+                audio_path=row["audio_path"],
+                raw_result=json.loads(row["raw_result"]),
+            )
+            for row in rows
+        ]
