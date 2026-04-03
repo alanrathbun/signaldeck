@@ -26,7 +26,9 @@ def cli() -> None:
 @click.option("--config", "config_path", type=click.Path(exists=True), default=None,
               help="Path to config YAML file")
 @click.option("--headless", is_flag=True, help="Start without web dashboard")
-def start(config_path: str | None, headless: bool) -> None:
+@click.option("--host", default="0.0.0.0", help="Web dashboard host")
+@click.option("--port", default=8080, type=int, help="Web dashboard port")
+def start(config_path: str | None, headless: bool, host: str, port: int) -> None:
     """Start the SignalDeck engine."""
     cfg = load_config(config_path)
     setup_logging(cfg["logging"]["level"])
@@ -46,11 +48,24 @@ def start(config_path: str | None, headless: bool) -> None:
         await db.initialize()
         logger.info("Database initialized at %s", db_path)
 
+        # Start web dashboard (unless headless)
+        web_task = None
+        if not headless:
+            from signaldeck.api.server import create_app
+            import uvicorn
+            app = create_app(cfg)
+            uvi_config = uvicorn.Config(app, host=host, port=port, log_level="info")
+            server = uvicorn.Server(uvi_config)
+            web_task = asyncio.create_task(server.serve())
+            logger.info("Web dashboard at http://%s:%d", host, port)
+
         # Discover devices
         mgr = DeviceManager()
         available = mgr.enumerate()
         if not available:
             logger.error("No SDR devices found. Connect a device and try again.")
+            if web_task:
+                web_task.cancel()
             await db.close()
             return
 
@@ -107,6 +122,8 @@ def start(config_path: str | None, headless: bool) -> None:
         finally:
             device.close()
             await db.close()
+            if web_task:
+                web_task.cancel()
             logger.info("Shutdown complete.")
 
     asyncio.run(_run())
