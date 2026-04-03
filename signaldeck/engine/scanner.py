@@ -121,7 +121,7 @@ class FrequencyScanner:
         self._dwell_time = dwell_time_s
         self._running = False
 
-    async def sweep_once(self) -> list[DetectedSignal]:
+    async def sweep_once(self, fft_callback=None) -> list[DetectedSignal]:
         all_signals: list[DetectedSignal] = []
         self._device.set_sample_rate(self._sample_rate)
         self._device.start_stream()
@@ -137,6 +137,11 @@ class FrequencyScanner:
                         continue
 
                     power_db = compute_power_spectrum(samples, self._fft_size)
+
+                    # Broadcast FFT data for waterfall display
+                    if fft_callback is not None:
+                        await fft_callback(freq, self._sample_rate, power_db)
+
                     noise_floor = estimate_noise_floor(power_db)
                     squelch = noise_floor + self._squelch_offset
 
@@ -157,10 +162,99 @@ class FrequencyScanner:
 
         return all_signals
 
-    async def run(self, callback=None) -> None:
+    async def strength_sweep_once(self, fft_callback=None) -> list[DetectedSignal]:
+        """Sweep by reading signal strength at each frequency (for gqrx backend).
+
+        Instead of computing FFT from IQ samples, tunes to each frequency and
+        reads a single signal strength value from the device.
+        """
+        all_signals: list[DetectedSignal] = []
+
+        for scan_range in self._scan_ranges:
+            freqs = scan_range.frequencies()
+            strengths = np.full(len(freqs), -100.0)
+
+            for i, freq in enumerate(freqs):
+                await self._device.tune(freq)
+                if self._dwell_time > 0:
+                    await asyncio.sleep(self._dwell_time)
+                strengths[i] = await self._device.get_signal_strength()
+
+            # Broadcast the collected strengths as a power array for waterfall
+            if fft_callback is not None:
+                center = (scan_range.start_hz + scan_range.end_hz) / 2
+                bandwidth = scan_range.end_hz - scan_range.start_hz
+                await fft_callback(center, bandwidth, strengths)
+
+            # Detect signals above noise floor + squelch offset
+            noise_floor = float(np.median(strengths))
+            threshold = noise_floor + self._squelch_offset
+
+            for i, freq in enumerate(freqs):
+                if strengths[i] > threshold:
+                    all_signals.append(DetectedSignal(
+                        frequency_hz=freq,
+                        bandwidth_hz=scan_range.step_hz,
+                        peak_power=float(strengths[i]),
+                        avg_power=float(strengths[i]),
+                        bin_start=i,
+                        bin_end=i + 1,
+                    ))
+
+        all_signals.sort(key=lambda s: s.peak_power, reverse=True)
+        return all_signals
+
+    async def bookmark_scan_once(self, bookmarks, fft_callback=None) -> list[DetectedSignal]:
+        """Scan a list of bookmarked frequencies by reading signal strength.
+
+        Args:
+            bookmarks: List of Bookmark objects to scan.
+            fft_callback: Optional async callback(center_freq, bandwidth, power_array).
+
+        Returns:
+            List of DetectedSignal for active bookmarks.
+        """
+        if not bookmarks:
+            return []
+
+        signals: list[DetectedSignal] = []
+        freqs = np.array([b.frequency for b in bookmarks])
+        strengths = np.full(len(bookmarks), -100.0)
+
+        for i, bk in enumerate(bookmarks):
+            await self._device.tune(bk.frequency)
+            if self._dwell_time > 0:
+                await asyncio.sleep(self._dwell_time)
+            strengths[i] = await self._device.get_signal_strength()
+
+        # Broadcast for waterfall
+        if fft_callback is not None and len(bookmarks) > 0:
+            center = (freqs.min() + freqs.max()) / 2
+            bandwidth = freqs.max() - freqs.min() if len(freqs) > 1 else 1e6
+            await fft_callback(center, bandwidth, strengths)
+
+        # Detect active signals
+        noise_floor = float(np.median(strengths))
+        threshold = noise_floor + self._squelch_offset
+
+        for i, bk in enumerate(bookmarks):
+            if strengths[i] > threshold:
+                signals.append(DetectedSignal(
+                    frequency_hz=bk.frequency,
+                    bandwidth_hz=0,  # unknown from strength reading
+                    peak_power=float(strengths[i]),
+                    avg_power=float(strengths[i]),
+                    bin_start=i,
+                    bin_end=i + 1,
+                ))
+
+        signals.sort(key=lambda s: s.peak_power, reverse=True)
+        return signals
+
+    async def run(self, callback=None, fft_callback=None) -> None:
         self._running = True
         while self._running:
-            signals = await self.sweep_once()
+            signals = await self.sweep_once(fft_callback=fft_callback)
             if callback and signals:
                 await callback(signals)
 
