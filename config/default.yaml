@@ -1,0 +1,40 @@
+# SignalDeck default configuration
+
+devices:
+  auto_discover: true
+  gain: 40  # dB, overridden per device if needed
+
+scanner:
+  squelch_offset: 10  # dB above noise floor
+  dwell_time_ms: 50   # time per frequency step
+  fft_size: 1024
+  sweep_ranges:
+    - label: "VHF Low"
+      start_mhz: 25
+      end_mhz: 54
+    - label: "VHF High"
+      start_mhz: 134
+      end_mhz: 174
+    - label: "UHF"
+      start_mhz: 400
+      end_mhz: 512
+    - label: "Airband"
+      start_mhz: 118
+      end_mhz: 137
+    - label: "ISM 433"
+      start_mhz: 430
+      end_mhz: 440
+    - label: "Broadcast FM"
+      start_mhz: 88
+      end_mhz: 108
+
+audio:
+  sample_rate: 48000
+  recording_dir: "data/recordings"
+  format: "wav"
+
+storage:
+  database_path: "data/signaldeck.db"
+
+logging:
+  level: "INFO"
