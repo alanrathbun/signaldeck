@@ -23,6 +23,7 @@ def signal_broadcast(frequency_hz, bandwidth_hz, power, modulation="unknown", pr
 
 
 async def broadcast(message: dict):
+    global _clients
     disconnected = set()
     for ws in _clients:
         try:
