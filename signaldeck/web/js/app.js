@@ -20,6 +20,8 @@ function dashboard() {
 
     // --- Live Signals ---
     liveSignals: [],
+    liveFilterMod: '',
+    liveFilterProto: '',
 
     // --- Signals Page ---
     signals: [],
@@ -488,8 +490,48 @@ function dashboard() {
     // =====================================================
     // Audio
     // =====================================================
+    // --- Live signal filtering ---
+    get filteredLiveSignals() {
+      return this.liveSignals.filter(s => {
+        if (this.liveFilterMod && s.modulation !== this.liveFilterMod) return false;
+        if (this.liveFilterProto && s.protocol !== this.liveFilterProto) return false;
+        return true;
+      });
+    },
+
+    get liveModulations() {
+      const mods = new Set(this.liveSignals.map(s => s.modulation).filter(Boolean));
+      return [...mods].sort();
+    },
+
+    get liveProtocols() {
+      const protos = new Set(this.liveSignals.map(s => s.protocol).filter(Boolean));
+      return [...protos].sort();
+    },
+
     tuneFrequency(freqHz) {
       this.audioFreqMhz = freqHz / 1e6;
+    },
+
+    tuneAndListen(freqHz) {
+      this.audioFreqMhz = freqHz / 1e6;
+      this.startAudio();
+    },
+
+    async quickBookmark(sig) {
+      const label = (sig.protocol || sig.modulation || 'Signal') + ' ' + this.formatFreq(sig.frequency);
+      await this.apiFetch('/api/bookmarks', {
+        method: 'POST',
+        body: JSON.stringify({
+          frequency_hz: sig.frequency,
+          label: label,
+          modulation: sig.modulation || 'FM',
+          decoder: sig.protocol || null,
+          priority: 3,
+        }),
+      });
+      this.showToast('Bookmarked ' + this.formatFreq(sig.frequency), 'success');
+      this.fetchBookmarks();
     },
 
     startAudio() {

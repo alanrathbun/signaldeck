@@ -99,52 +99,11 @@
         <canvas id="waterfall-canvas" width="1024" height="250"></canvas>
       </div>
 
-      <!-- Active Signals -->
-      <div class="card">
-        <div class="card-header">
-          <h3>Active Signals</h3>
-          <span class="badge badge-green" x-text="liveSignals.length + ' active'"></span>
-        </div>
-        <div class="table-wrap">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Frequency</th>
-                <th>Bandwidth</th>
-                <th>Power</th>
-                <th>Modulation</th>
-                <th>Protocol</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              <template x-for="sig in liveSignals" :key="sig.frequency">
-                <tr>
-                  <td class="freq-cell" x-text="formatFreq(sig.frequency)"></td>
-                  <td x-text="sig.bandwidth ? (sig.bandwidth / 1000).toFixed(1) + ' kHz' : '--'"></td>
-                  <td>
-                    <div class="power-indicator">
-                      <div class="power-bar" :style="'width:' + powerPct(sig.power) + '%;background:' + powerColor(sig.power)"></div>
-                      <span class="power-label" x-text="formatPower(sig.power)"></span>
-                    </div>
-                  </td>
-                  <td><span class="badge" :class="modBadge(sig.modulation)" x-text="sig.modulation || '--'"></span></td>
-                  <td x-text="sig.protocol || '--'"></td>
-                  <td><button class="btn btn-sm btn-primary" @click="tuneFrequency(sig.frequency)">Tune</button></td>
-                </tr>
-              </template>
-              <tr x-show="liveSignals.length === 0">
-                <td colspan="6" class="empty-state">No active signals. Start the scanner to begin.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- Audio Player -->
-      <div class="card">
+      <!-- Audio Player (above signals so clicking tune is convenient) -->
+      <div class="card" :class="audioPlaying ? 'card-active' : ''">
         <div class="card-header">
           <h3>Audio Monitor</h3>
+          <span class="badge badge-green" x-show="audioPlaying" x-text="'Listening: ' + (audioFreqMhz || '--') + ' MHz'"></span>
         </div>
         <div class="audio-controls">
           <div class="audio-freq">
@@ -155,7 +114,7 @@
           <div class="audio-buttons">
             <button class="btn btn-primary" @click="startAudio()" x-show="!audioPlaying">
               <svg viewBox="0 0 20 20" width="16" height="16"><polygon points="4,2 18,10 4,18" fill="currentColor"/></svg>
-              Play
+              Listen
             </button>
             <button class="btn btn-danger" @click="stopAudio()" x-show="audioPlaying">
               <svg viewBox="0 0 20 20" width="16" height="16"><rect x="4" y="3" width="12" height="14" rx="2" fill="currentColor"/></svg>
@@ -170,6 +129,71 @@
           <div class="vu-meter" x-show="audioPlaying">
             <div class="vu-bar" :style="'width:' + (audioLevel * 100) + '%'"></div>
           </div>
+        </div>
+      </div>
+
+      <!-- Active Signals -->
+      <div class="card">
+        <div class="card-header">
+          <h3>Active Signals</h3>
+          <span class="badge badge-green" x-text="filteredLiveSignals.length + ' active'"></span>
+        </div>
+        <!-- Filters -->
+        <div class="signal-filters">
+          <select class="form-select filter-select" x-model="liveFilterMod" title="Filter by modulation">
+            <option value="">All Modulations</option>
+            <template x-for="mod in liveModulations" :key="mod">
+              <option :value="mod" x-text="mod"></option>
+            </template>
+          </select>
+          <select class="form-select filter-select" x-model="liveFilterProto" title="Filter by protocol">
+            <option value="">All Protocols</option>
+            <template x-for="proto in liveProtocols" :key="proto">
+              <option :value="proto" x-text="proto"></option>
+            </template>
+          </select>
+          <button class="btn btn-small" @click="liveFilterMod=''; liveFilterProto=''" x-show="liveFilterMod || liveFilterProto">Clear Filters</button>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Frequency</th>
+                <th>Bandwidth</th>
+                <th>Power</th>
+                <th>Modulation</th>
+                <th>Protocol</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="sig in filteredLiveSignals" :key="sig.frequency">
+                <tr :class="audioFreqMhz && Math.abs(sig.frequency - audioFreqMhz * 1e6) < 1000 ? 'row-active' : ''">
+                  <td class="freq-cell clickable" @click="tuneAndListen(sig.frequency)" x-text="formatFreq(sig.frequency)" title="Click to listen"></td>
+                  <td x-text="sig.bandwidth ? (sig.bandwidth / 1000).toFixed(1) + ' kHz' : '--'"></td>
+                  <td>
+                    <div class="power-indicator">
+                      <div class="power-bar" :style="'width:' + powerPct(sig.power) + '%;background:' + powerColor(sig.power)"></div>
+                      <span class="power-label" x-text="formatPower(sig.power)"></span>
+                    </div>
+                  </td>
+                  <td><span class="badge" :class="modBadge(sig.modulation)" x-text="sig.modulation || '--'"></span></td>
+                  <td x-text="sig.protocol || '--'"></td>
+                  <td class="action-buttons">
+                    <button class="btn btn-sm btn-primary" @click="tuneAndListen(sig.frequency)" title="Listen">
+                      <svg viewBox="0 0 20 20" width="12" height="12"><polygon points="4,2 18,10 4,18" fill="currentColor"/></svg>
+                    </button>
+                    <button class="btn btn-sm btn-success" @click="quickBookmark(sig)" title="Bookmark">
+                      <svg viewBox="0 0 20 20" width="12" height="12"><path d="M5 2h10v16l-5-4-5 4V2z" fill="currentColor"/></svg>
+                    </button>
+                  </td>
+                </tr>
+              </template>
+              <tr x-show="filteredLiveSignals.length === 0">
+                <td colspan="6" class="empty-state">No active signals. Start the scanner to begin.</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </section>

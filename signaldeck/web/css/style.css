@@ -973,3 +973,48 @@ a:hover { text-decoration: underline; }
     padding: 8px;
   }
 }
+
+/* Active card highlight (e.g., audio playing) */
+.card-active {
+  border-color: var(--accent-green);
+  box-shadow: 0 0 8px rgba(63, 185, 80, 0.3);
+}
+
+/* Signal filters bar */
+.signal-filters {
+  display: flex;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border-light);
+  align-items: center;
+}
+
+.filter-select {
+  max-width: 180px;
+  font-size: 0.85rem;
+}
+
+/* Active row highlight (tuned frequency) */
+.row-active {
+  background: rgba(88, 166, 255, 0.1) !important;
+  border-left: 3px solid var(--accent-blue);
+}
+
+/* Action buttons in table cell */
+.action-buttons {
+  display: flex;
+  gap: 4px;
+}
+
+.btn-sm {
+  padding: 3px 8px;
+  font-size: 0.75rem;
+}
+
+.clickable {
+  cursor: pointer;
+}
+.clickable:hover {
+  color: var(--accent-blue);
+  text-decoration: underline;
+}

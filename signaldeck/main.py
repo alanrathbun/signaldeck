@@ -22,6 +22,34 @@ def cli() -> None:
     """SignalDeck — SDR scanner, classifier, and decoder platform."""
 
 
+async def _stream_audio(device, frequency_hz: float, send_fn, sample_rate: float = 2_000_000,
+                        duration_s: float = 0.5) -> None:
+    """Tune to a frequency, demodulate FM, and stream audio via WebSocket.
+
+    Captures `duration_s` seconds of IQ, demodulates, and sends as PCM.
+    """
+    import numpy as np
+    from signaldeck.engine.audio_pipeline import fm_demodulate
+
+    num_samples = int(sample_rate * duration_s)
+    device.tune(frequency_hz)
+    await asyncio.sleep(0.01)  # settle time
+
+    device.start_stream()
+    samples = device.read_samples(num_samples)
+    device.stop_stream()
+
+    if samples is None or len(samples) < 1000:
+        return
+
+    # FM demodulate to 48 kHz audio
+    audio = fm_demodulate(samples, sample_rate=sample_rate, audio_rate=48000)
+
+    # Convert to 16-bit PCM bytes
+    pcm16 = (np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16)
+    await send_fn(frequency_hz, pcm16.tobytes())
+
+
 @cli.command()
 @click.option("--config", "config_path", type=click.Path(exists=True), default=None,
               help="Path to config YAML file")
@@ -97,10 +125,18 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
 
         # WebSocket broadcast (only when dashboard is running)
         ws_broadcast = None
+        audio_stream_fn = None
+        audio_request_fn = None
         if not headless:
             try:
                 from signaldeck.api.websocket.live_signals import broadcast, signal_broadcast
                 ws_broadcast = (broadcast, signal_broadcast)
+            except ImportError:
+                pass
+            try:
+                from signaldeck.api.websocket.audio_stream import send_audio_chunk, get_audio_request
+                audio_stream_fn = send_audio_chunk
+                audio_request_fn = get_audio_request
             except ImportError:
                 pass
 
@@ -156,9 +192,20 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
 
         logger.info("Starting sweep across %d range(s)...", len(ranges))
         try:
-            await scanner.run(callback=on_signals)
+            while True:
+                # Check if audio streaming is requested
+                if audio_request_fn:
+                    audio_req = audio_request_fn()
+                    if audio_req.get("active") and audio_req.get("frequency_hz"):
+                        await _stream_audio(device, audio_req["frequency_hz"],
+                                            audio_stream_fn, sample_rate=2_000_000)
+
+                # Run one sweep cycle
+                signals = await scanner.sweep_once()
+                if signals:
+                    await on_signals(signals)
         except KeyboardInterrupt:
-            scanner.stop()
+            pass
         finally:
             device.close()
             await db.close()
