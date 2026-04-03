@@ -54,3 +54,43 @@ def test_pager_routes_to_pocsag():
                         modulation="FM", protocol_hint="narrowband_fm")
     names = [m[0].name for m in registry.find_decoders(signal)]
     assert "pocsag" in names
+
+def test_default_registry_has_new_decoders():
+    registry = create_default_registry()
+    names = [d.name for d in registry.list_decoders()]
+    assert "acars" in names
+    assert "dsd" in names
+    assert "p25" in names
+    assert "noaa_apt" in names
+
+def test_acars_routes_correctly():
+    registry = create_default_registry()
+    signal = SignalInfo(frequency_hz=131.55e6, bandwidth_hz=12500.0, peak_power=-45.0,
+                        modulation="AM", protocol_hint="acars")
+    matches = registry.find_decoders(signal)
+    assert matches[0][0].name == "acars"
+
+def test_p25_routes_correctly():
+    registry = create_default_registry()
+    signal = SignalInfo(frequency_hz=851e6, bandwidth_hz=12500.0, peak_power=-50.0,
+                        modulation="FM", protocol_hint="p25")
+    matches = registry.find_decoders(signal)
+    assert matches[0][0].name == "p25"
+
+def test_dmr_routes_to_dsd():
+    registry = create_default_registry()
+    signal = SignalInfo(frequency_hz=460e6, bandwidth_hz=12500.0, peak_power=-50.0,
+                        modulation="FM", protocol_hint="dmr")
+    matches = registry.find_decoders(signal)
+    assert matches[0][0].name == "dsd"
+
+def test_noaa_apt_routes_correctly():
+    registry = create_default_registry()
+    signal = SignalInfo(frequency_hz=137.1e6, bandwidth_hz=40e3, peak_power=-60.0,
+                        modulation="FM", protocol_hint="noaa_apt")
+    matches = registry.find_decoders(signal)
+    assert matches[0][0].name == "noaa_apt"
+
+def test_total_decoder_count():
+    registry = create_default_registry()
+    assert len(registry.list_decoders()) == 11

@@ -6,6 +6,10 @@ from signaldeck.decoders.ism import IsmDecoder
 from signaldeck.decoders.pocsag import PocsagDecoder
 from signaldeck.decoders.aprs import AprsDecoder
 from signaldeck.decoders.adsb import AdsbDecoder
+from signaldeck.decoders.acars import AcarsDecoder
+from signaldeck.decoders.dsd import DsdDecoder
+from signaldeck.decoders.p25 import P25Decoder
+from signaldeck.decoders.noaa_apt import NoaaAptDecoder
 
 def create_default_registry(recording_dir: str = "data/recordings") -> DecoderRegistry:
     registry = DecoderRegistry()
@@ -16,4 +20,8 @@ def create_default_registry(recording_dir: str = "data/recordings") -> DecoderRe
     registry.register(PocsagDecoder())
     registry.register(AprsDecoder())
     registry.register(AdsbDecoder())
+    registry.register(AcarsDecoder())
+    registry.register(DsdDecoder(recording_dir=recording_dir))
+    registry.register(P25Decoder())
+    registry.register(NoaaAptDecoder())
     return registry
