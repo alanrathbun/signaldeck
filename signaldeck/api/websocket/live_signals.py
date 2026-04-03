@@ -37,6 +37,7 @@ async def broadcast(message: dict):
     if now - last < _BROADCAST_INTERVAL_S:
         return
     _last_broadcast[freq_key] = now
+    logger.debug("Broadcasting signal %.3f MHz to %d client(s)", message.get("frequency_mhz", 0), len(_clients))
 
     # Prune old entries periodically
     if len(_last_broadcast) > 5000:
@@ -56,6 +57,7 @@ async def broadcast(message: dict):
 async def ws_signals(websocket: WebSocket):
     await websocket.accept()
     _clients.add(websocket)
+    logger.info("WebSocket client connected (%d total)", len(_clients))
     try:
         while True:
             data = await websocket.receive_json()
@@ -65,3 +67,4 @@ async def ws_signals(websocket: WebSocket):
         pass
     finally:
         _clients.discard(websocket)
+        logger.info("WebSocket client disconnected (%d remaining)", len(_clients))

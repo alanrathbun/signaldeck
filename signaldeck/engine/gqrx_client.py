@@ -52,13 +52,16 @@ class GqrxClient:
         if not self.is_connected:
             raise GqrxConnectionError("Not connected to gqrx")
         try:
+            logger.debug("gqrx >> %s", cmd)
             self._writer.write(f"{cmd}\n".encode())
             await self._writer.drain()
             line = await asyncio.wait_for(
                 self._reader.readline(),
                 timeout=self.timeout,
             )
-            return line.decode().strip()
+            resp = line.decode().strip()
+            logger.debug("gqrx << %s", resp)
+            return resp
         except (OSError, asyncio.TimeoutError) as e:
             self._writer = None
             self._reader = None

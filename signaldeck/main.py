@@ -274,6 +274,7 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
             logger.info("Starting sweep across %d range(s)...", len(ranges))
         else:
             logger.info("gqrx-only mode — use the dashboard to tune frequencies")
+        idle_ticks = 0
         try:
             while True:
                 # If gqrx is connected, handle tuning requests from the UI
@@ -298,6 +299,11 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                         await on_signals(signals)
                 else:
                     # gqrx-only mode: no scanning, just handle tuning
+                    idle_ticks += 1
+                    if idle_ticks % 20 == 1:  # every ~10s
+                        logger.info("Idle — dashboard ready, %s",
+                                    "gqrx connected" + (" (tuned to %.3f MHz)" % (_gqrx_tuned_freq / 1e6) if _gqrx_tuned_freq else " (idle)")
+                                    if gqrx_device else "no gqrx")
                     await asyncio.sleep(0.5)
         except KeyboardInterrupt:
             pass

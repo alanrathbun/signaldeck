@@ -17,7 +17,7 @@ class GqrxDevice:
 
     async def tune(self, frequency_hz: float) -> None:
         await self._client.set_frequency(int(frequency_hz))
-        logger.debug("gqrx tuned to %.6f MHz", frequency_hz / 1e6)
+        logger.info("gqrx tuned to %.6f MHz", frequency_hz / 1e6)
 
     def set_gain(self, gain_db: float) -> None:
         pass  # gqrx manages gain internally
