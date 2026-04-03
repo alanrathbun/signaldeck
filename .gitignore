@@ -19,3 +19,4 @@ config/credentials.yaml
 # OS
 .DS_Store
 Thumbs.db
+HANDOFF.md
