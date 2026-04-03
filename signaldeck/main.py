@@ -112,17 +112,21 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
         hw_devices = [d for d in available if d.driver not in ("audio", "gqrx")]
         gqrx_devices = [d for d in available if d.driver == "gqrx"]
 
-        if not hw_devices:
-            logger.error("No SDR devices found. Connect a HackRF or RTL-SDR.")
+        if not hw_devices and not gqrx_devices:
+            logger.error("No devices found. Connect an SDR or start gqrx with remote control enabled.")
             if web_task:
                 web_task.cancel()
             await db.close()
             return
 
-        # Open SoapySDR device for scanning
-        device = mgr.open(driver=hw_devices[0].driver, serial=hw_devices[0].serial)
-        device.set_gain(cfg["devices"]["gain"])
-        logger.info("Scanning with: %s (%s)", hw_devices[0].label, hw_devices[0].driver)
+        # Open SoapySDR device for scanning (if available)
+        device = None
+        if hw_devices:
+            device = mgr.open(driver=hw_devices[0].driver, serial=hw_devices[0].serial)
+            device.set_gain(cfg["devices"]["gain"])
+            logger.info("Scanning with: %s (%s)", hw_devices[0].label, hw_devices[0].driver)
+        else:
+            logger.info("No SoapySDR device found — running in gqrx-only mode (no scanning)")
 
         # Open gqrx as tuner/player if available
         gqrx_device = None
@@ -142,15 +146,17 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                 logger.warning("Could not connect to gqrx: %s", e)
                 gqrx_device = None
 
-        # Build scan ranges
+        # Build scan ranges and scanner (only if we have an SDR device)
+        scanner = None
         ranges = [ScanRange.from_config(r) for r in cfg["scanner"]["sweep_ranges"]]
-        scanner = FrequencyScanner(
-            device=device,
-            scan_ranges=ranges,
-            fft_size=cfg["scanner"]["fft_size"],
-            squelch_offset_db=cfg["scanner"]["squelch_offset"],
-            dwell_time_s=cfg["scanner"]["dwell_time_ms"] / 1000.0,
-        )
+        if device:
+            scanner = FrequencyScanner(
+                device=device,
+                scan_ranges=ranges,
+                fft_size=cfg["scanner"]["fft_size"],
+                squelch_offset_db=cfg["scanner"]["squelch_offset"],
+                dwell_time_s=cfg["scanner"]["dwell_time_ms"] / 1000.0,
+            )
 
         from datetime import datetime, timezone
         from signaldeck.storage.models import Signal, ActivityEntry
@@ -264,32 +270,40 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                     _gqrx_tuned_freq = None
                     logger.info("gqrx: idle")
 
-        logger.info("Starting sweep across %d range(s)...", len(ranges))
+        if scanner:
+            logger.info("Starting sweep across %d range(s)...", len(ranges))
+        else:
+            logger.info("gqrx-only mode — use the dashboard to tune frequencies")
         try:
             while True:
                 # If gqrx is connected, handle tuning requests from the UI
                 await _handle_gqrx_tuning()
 
-                # If no gqrx, SoapySDR can do audio (pauses scanning)
-                if not gqrx_device and audio_request_fn:
-                    audio_req = audio_request_fn()
-                    if audio_req.get("active") and audio_req.get("frequency_hz"):
-                        logger.info("Audio streaming: tuning to %.3f MHz",
-                                    audio_req["frequency_hz"] / 1e6)
-                        await _stream_audio(device, audio_req["frequency_hz"],
-                                            audio_stream_fn, audio_request_fn,
-                                            sample_rate=2_000_000)
-                        logger.info("Audio streaming ended, resuming scan")
-                        continue
+                if scanner:
+                    # If no gqrx, SoapySDR can do audio (pauses scanning)
+                    if not gqrx_device and audio_request_fn:
+                        audio_req = audio_request_fn()
+                        if audio_req.get("active") and audio_req.get("frequency_hz"):
+                            logger.info("Audio streaming: tuning to %.3f MHz",
+                                        audio_req["frequency_hz"] / 1e6)
+                            await _stream_audio(device, audio_req["frequency_hz"],
+                                                audio_stream_fn, audio_request_fn,
+                                                sample_rate=2_000_000)
+                            logger.info("Audio streaming ended, resuming scan")
+                            continue
 
-                # SoapySDR always handles scanning
-                signals = await scanner.sweep_once(fft_callback=on_fft)
-                if signals:
-                    await on_signals(signals)
+                    # SoapySDR handles scanning
+                    signals = await scanner.sweep_once(fft_callback=on_fft)
+                    if signals:
+                        await on_signals(signals)
+                else:
+                    # gqrx-only mode: no scanning, just handle tuning
+                    await asyncio.sleep(0.5)
         except KeyboardInterrupt:
             pass
         finally:
-            device.close()
+            if device:
+                device.close()
             if gqrx_device:
                 await gqrx_device.close()
             await db.close()

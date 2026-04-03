@@ -36,12 +36,20 @@ Built for the HackRF One and RTL-SDR, with support for multiple simultaneous SDR
 
 ## Hardware
 
-**Required:**
-- HackRF One (or any SoapySDR-compatible SDR) for scanning
+SignalDeck supports three operating modes:
+
+| Mode | What You Need | Scanning | Listening |
+|------|--------------|----------|-----------|
+| **SDR + gqrx** (recommended) | SoapySDR device + gqrx | Automatic FFT sweep | Click signal to tune gqrx |
+| **SDR only** | SoapySDR device | Automatic FFT sweep | Audio streamed via web dashboard |
+| **gqrx only** | gqrx | None (manual tuning) | Tune via dashboard, audio through gqrx |
+
+**SDR devices:**
+- HackRF One, RTL-SDR Blog V4/V5, or any SoapySDR-compatible SDR
 
 **Recommended additions:**
 - [gqrx](https://gqrx.dk/) for audio playback -- SignalDeck auto-detects gqrx and uses it as a tuner/player
-- RTL-SDR Blog V4/V5 for dedicated monitoring (e.g., park on ADS-B 1090 MHz while HackRF sweeps)
+- Multiple SDR devices for dedicated monitoring (e.g., RTL-SDR on ADS-B 1090 MHz while HackRF sweeps)
 - Appropriate antennas for your frequency ranges of interest
 
 ## Quick Start
