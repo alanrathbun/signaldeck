@@ -52,14 +52,28 @@ class AuthMiddleware(BaseHTTPMiddleware):
         return JSONResponse({"detail": "Not authenticated"}, status_code=401)
 
 
-def create_app(config: dict) -> FastAPI:
+def create_app(config: dict, shared_db: Database | None = None) -> FastAPI:
+    """Create the FastAPI application.
+
+    Args:
+        config: Application configuration dict.
+        shared_db: Optional pre-initialized Database instance to share with
+                   the scanner engine. If provided, the server won't create
+                   its own connection or close it on shutdown.
+    """
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        db_path = config["storage"]["database_path"]
-        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        db = Database(db_path)
-        await db.initialize()
-        _state["db"] = db
+        if shared_db:
+            _state["db"] = shared_db
+            owns_db = False
+        else:
+            db_path = config["storage"]["database_path"]
+            Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+            db = Database(db_path)
+            await db.initialize()
+            _state["db"] = db
+            owns_db = True
+
         _state["config"] = config
 
         # Initialize auth if enabled
@@ -72,9 +86,10 @@ def create_app(config: dict) -> FastAPI:
             _state["auth"] = mgr
             logger.info("Authentication enabled")
 
-        logger.info("API server started, database at %s", db_path)
+        logger.info("API server started")
         yield
-        await db.close()
+        if owns_db:
+            await _state["db"].close()
         _state.clear()
 
     app = FastAPI(title="SignalDeck", version=__version__, lifespan=lifespan)

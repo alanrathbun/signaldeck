@@ -53,7 +53,7 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
         if not headless:
             from signaldeck.api.server import create_app
             import uvicorn
-            app = create_app(cfg)
+            app = create_app(cfg, shared_db=db)
             uvi_config = uvicorn.Config(app, host=host, port=port, log_level="info")
             server = uvicorn.Server(uvi_config)
             web_task = asyncio.create_task(server.serve())
