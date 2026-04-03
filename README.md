@@ -250,7 +250,10 @@ All endpoints are under `/api/`. When auth is enabled, include `Authorization: B
 | DELETE | `/api/bookmarks/{id}` | Delete bookmark |
 | GET | `/api/recordings` | List audio recordings |
 | GET | `/api/analytics/summary` | Signal statistics |
-| GET | `/api/scanner/status` | Scanner state |
+| GET | `/api/scanner/status` | Scanner state and config |
+| POST | `/api/scanner/start` | Start scanning |
+| POST | `/api/scanner/stop` | Stop scanning |
+| GET | `/api/settings` | Full system configuration |
 | POST | `/api/auth/login` | Login (returns tokens) |
 | POST | `/api/auth/change-password` | Change password |
 
@@ -307,7 +310,7 @@ signaldeck/
 │   ├── install_decoders.sh    # Build P25/DMR/ACARS/APT decoders
 │   ├── setup_nginx.sh         # Nginx reverse proxy
 │   └── setup_tailscale.sh     # Tailscale VPN
-├── tests/                     # 214 tests
+├── tests/                     # 218 tests (214 unit + 4 hardware integration)
 ├── pyproject.toml
 ├── LICENSE                    # GPL v3
 └── README.md
