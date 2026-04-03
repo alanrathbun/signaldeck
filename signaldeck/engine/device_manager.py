@@ -55,7 +55,9 @@ class SDRDevice:
     def read_samples(self, num_samples: int) -> np.ndarray | None:
         buf = np.zeros(num_samples, dtype=np.complex64)
         status = self._dev.readStream(self._stream, [buf], num_samples)
-        if isinstance(status, tuple):
+        if hasattr(status, "ret"):
+            ret_code = status.ret
+        elif isinstance(status, tuple):
             ret_code = status[0]
         else:
             ret_code = status
@@ -106,7 +108,7 @@ class DeviceManager:
 
         soapy_dev = SoapySDR.Device(args)
         hw_key = soapy_dev.getHardwareKey()
-        hw_info = soapy_dev.getHardwareInfo()
+        hw_info = dict(soapy_dev.getHardwareInfo())
 
         info = DeviceInfo(
             label=hw_key,
