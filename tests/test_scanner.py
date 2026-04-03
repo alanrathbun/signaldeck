@@ -33,7 +33,9 @@ def test_compute_power_spectrum():
     power_db = compute_power_spectrum(samples, fft_size=n)
     assert len(power_db) == n
     peak_bin = np.argmax(power_db)
-    assert abs(peak_bin - k) <= 1
+    # After fftshift, bin k maps to (k + n/2) % n
+    expected_bin = (k + n // 2) % n
+    assert abs(peak_bin - expected_bin) <= 1
     assert power_db[peak_bin] > np.median(power_db) + 20
 
 

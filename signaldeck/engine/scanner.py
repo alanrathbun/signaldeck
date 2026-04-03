@@ -39,7 +39,7 @@ class DetectedSignal:
 
 def compute_power_spectrum(samples: NDArray[np.complex64], fft_size: int = 1024) -> NDArray[np.float64]:
     windowed = samples[:fft_size] * np.hanning(fft_size)
-    spectrum = np.fft.fft(windowed, n=fft_size)
+    spectrum = np.fft.fftshift(np.fft.fft(windowed, n=fft_size))
     magnitude_sq = np.real(spectrum * np.conj(spectrum)) / (fft_size * fft_size)
     magnitude_sq = np.maximum(magnitude_sq, 1e-20)
     return 10.0 * np.log10(magnitude_sq)
