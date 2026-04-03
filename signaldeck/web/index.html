@@ -440,8 +440,8 @@
         <div class="card">
           <div class="card-header">
             <h3>Scanner Status</h3>
-            <span class="badge" :class="scannerStatus.scanning ? 'badge-green' : 'badge-orange'"
-                  x-text="scannerStatus.scanning ? 'Active' : 'Idle'"></span>
+            <span class="badge" :class="scannerStatus.status === 'running' ? 'badge-green' : 'badge-orange'"
+                  x-text="scannerStatus.status === 'running' ? 'Active' : 'Idle'"></span>
           </div>
           <div class="settings-list">
             <div class="setting-row">
@@ -474,8 +474,12 @@
               <span class="setting-value" x-text="scannerStatus.gain != null ? scannerStatus.gain + ' dB' : '--'"></span>
             </div>
             <div class="setting-row">
-              <span class="setting-label">Squelch</span>
-              <span class="setting-value" x-text="scannerStatus.squelch != null ? scannerStatus.squelch + ' dB' : '--'"></span>
+              <span class="setting-label">Squelch Offset</span>
+              <span class="setting-value" x-text="scannerStatus.squelch_offset != null ? scannerStatus.squelch_offset + ' dB above noise floor' : '--'"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">FFT Size</span>
+              <span class="setting-value" x-text="scannerStatus.fft_size || '--'"></span>
             </div>
           </div>
         </div>
@@ -488,8 +492,8 @@
           <div class="settings-list">
             <template x-for="(range, i) in (scannerStatus.scan_ranges || [])" :key="i">
               <div class="setting-row">
-                <span class="setting-label" x-text="'Range ' + (i + 1)"></span>
-                <span class="setting-value" x-text="formatFreq(range.start) + ' - ' + formatFreq(range.end)"></span>
+                <span class="setting-label" x-text="range.label || ('Range ' + (i + 1))"></span>
+                <span class="setting-value" x-text="range.start_mhz + ' - ' + range.end_mhz + ' MHz'"></span>
               </div>
             </template>
             <div class="setting-row" x-show="!scannerStatus.scan_ranges || scannerStatus.scan_ranges.length === 0">

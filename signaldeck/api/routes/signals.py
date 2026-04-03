@@ -27,13 +27,22 @@ async def list_signals():
 async def list_activity(limit: int = Query(default=50, ge=1, le=1000)):
     db = get_db()
     entries = await db.get_recent_activity(limit=limit)
-    return [
-        {
+
+    # Look up frequency for each activity entry from its signal
+    results = []
+    signal_cache: dict[int, float] = {}
+    for e in entries:
+        if e.signal_id not in signal_cache:
+            sig = await db.get_signal_by_id(e.signal_id)
+            signal_cache[e.signal_id] = sig.frequency if sig else 0
+        freq = signal_cache[e.signal_id]
+        results.append({
             "id": e.id, "signal_id": e.signal_id,
             "timestamp": e.timestamp.isoformat(), "duration": e.duration,
-            "strength": e.strength, "decoder_used": e.decoder_used,
-            "result_type": e.result_type, "summary": e.summary,
+            "frequency": freq,
+            "frequency_mhz": round(freq / 1e6, 4) if freq else None,
+            "strength": e.strength, "decoder": e.decoder_used,
+            "type": e.result_type, "summary": e.summary,
             "audio_path": e.audio_path,
-        }
-        for e in entries
-    ]
+        })
+    return results

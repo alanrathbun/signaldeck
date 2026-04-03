@@ -165,6 +165,27 @@ class Database:
         await self._conn.commit()
         return cursor.lastrowid
 
+    async def get_signal_by_id(self, signal_id: int) -> Signal | None:
+        cursor = await self._conn.execute(
+            "SELECT * FROM signals WHERE id = ?", (signal_id,)
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return Signal(
+            id=row["id"],
+            frequency=row["frequency"],
+            bandwidth=row["bandwidth"],
+            modulation=row["modulation"],
+            protocol=row["protocol"],
+            first_seen=_str_to_dt(row["first_seen"]),
+            last_seen=_str_to_dt(row["last_seen"]),
+            hit_count=row["hit_count"],
+            avg_strength=row["avg_strength"],
+            confidence=row["confidence"],
+            classification_data=json.loads(row["classification_data"]),
+        )
+
     async def get_signal_by_frequency(
         self, frequency: float, tolerance_hz: float = 1000
     ) -> Signal | None:
