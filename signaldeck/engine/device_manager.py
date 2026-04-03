@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass
 
@@ -118,3 +120,75 @@ class DeviceManager:
         )
         logger.info("Opened device: %s (serial=%s)", info.label, info.serial)
         return SDRDevice(soapy_dev, info)
+
+    async def enumerate_async(
+        self,
+        gqrx_auto_detect: bool = True,
+        gqrx_host: str = "localhost",
+        gqrx_port: int = 7356,
+        gqrx_instances: list[dict] | None = None,
+    ) -> list[DeviceInfo]:
+        """Discover SDR devices including gqrx instances."""
+        devices = self.enumerate()  # existing SoapySDR discovery
+
+        # Try auto-detecting gqrx on the default or configured host:port
+        if gqrx_auto_detect:
+            info = await self._probe_gqrx(gqrx_host, gqrx_port)
+            if info:
+                devices.append(info)
+
+        # Check explicitly configured gqrx instances
+        for inst in (gqrx_instances or []):
+            host = inst.get("host", "localhost")
+            port = inst.get("port", 7356)
+            if host == gqrx_host and port == gqrx_port:
+                continue  # already checked above
+            info = await self._probe_gqrx(host, port)
+            if info:
+                devices.append(info)
+
+        return devices
+
+    async def _probe_gqrx(self, host: str, port: int) -> DeviceInfo | None:
+        """Try connecting to a gqrx instance and return DeviceInfo if it responds."""
+        import asyncio
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, port),
+                timeout=1.0,
+            )
+            writer.write(b"f\n")
+            await writer.drain()
+            resp = await asyncio.wait_for(reader.readline(), timeout=1.0)
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+            # If we got a valid frequency back, gqrx is running
+            int(resp.decode().strip())
+            info = DeviceInfo(
+                label=f"gqrx @ {host}:{port}",
+                driver="gqrx",
+                serial=f"{host}:{port}",
+            )
+            logger.info("Found gqrx at %s:%d", host, port)
+            return info
+        except Exception:
+            return None
+
+    async def open_gqrx(self, host: str = "localhost", port: int = 7356) -> GqrxDevice:
+        """Open a connection to a gqrx instance."""
+        from signaldeck.engine.gqrx_client import GqrxClient
+        from signaldeck.engine.gqrx_device import GqrxDevice
+
+        client = GqrxClient(host=host, port=port)
+        await client.connect()
+        info = DeviceInfo(
+            label=f"gqrx @ {host}:{port}",
+            driver="gqrx",
+            serial=f"{host}:{port}",
+        )
+        logger.info("Opened gqrx device at %s:%d", host, port)
+        return GqrxDevice(client, info)
