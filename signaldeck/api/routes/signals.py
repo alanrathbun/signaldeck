@@ -3,6 +3,40 @@ from signaldeck.api.server import get_db
 
 router = APIRouter()
 
+@router.get("/signals/enrichment")
+async def signal_enrichment():
+    """Return database signal data keyed by frequency (Hz) for frontend enrichment."""
+    db = get_db()
+    signals = await db.get_all_signals()
+    activity = await db.get_recent_activity(limit=500)
+
+    # Build activity lookup: signal_id -> most recent activity entry
+    activity_by_signal: dict[int, dict] = {}
+    for e in activity:
+        if e.signal_id not in activity_by_signal:
+            activity_by_signal[e.signal_id] = {
+                "decoder": e.decoder_used,
+                "type": e.result_type,
+                "summary": e.summary,
+                "timestamp": e.timestamp.isoformat(),
+            }
+
+    result = {}
+    for s in signals:
+        freq_key = str(int(s.frequency))
+        entry = {
+            "first_seen": s.first_seen.isoformat(),
+            "last_seen": s.last_seen.isoformat(),
+            "hit_count": s.hit_count,
+            "confidence": s.confidence,
+        }
+        if s.id and s.id in activity_by_signal:
+            entry["last_activity"] = activity_by_signal[s.id]
+        else:
+            entry["last_activity"] = None
+        result[freq_key] = entry
+    return result
+
 @router.get("/signals")
 async def list_signals(limit: int = Query(default=200, ge=1, le=5000),
                        sort: str = Query(default="hit_count")):

@@ -64,3 +64,22 @@ async def test_get_activity_with_limit(client):
             decoder_used=None, result_type="unknown", summary=f"Entry {i}"))
     resp = await client.get("/api/activity?limit=5")
     assert len(resp.json()) == 5
+
+async def test_enrichment_endpoint(client):
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    sig_id = await db.upsert_signal(Signal(frequency=162_550_000.0, bandwidth=12500.0, modulation="FM",
+        protocol="NOAA", first_seen=now, last_seen=now, hit_count=5, avg_strength=-45.0, confidence=0.8))
+    await db.insert_activity(ActivityEntry(signal_id=sig_id, timestamp=now, duration=2.0, strength=-45.0,
+        decoder_used="noaa", result_type="weather", summary="NOAA weather broadcast"))
+    resp = await client.get("/api/signals/enrichment")
+    assert resp.status_code == 200
+    data = resp.json()
+    # Keyed by frequency in Hz as string
+    key = "162550000"
+    assert key in data
+    assert data[key]["first_seen"] is not None
+    assert data[key]["hit_count"] == 5
+    assert data[key]["confidence"] == 0.8
+    assert data[key]["last_activity"]["decoder"] == "noaa"
+    assert data[key]["last_activity"]["type"] == "weather"
