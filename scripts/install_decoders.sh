@@ -61,9 +61,22 @@ sudo cmake --install build
 sudo ldconfig
 echo "  acarsdec installed: $(which acarsdec)"
 
+# ---- libmbe (required by DSD-FME) ----
+echo ""
+echo "[3/6] Building libmbe..."
+cd "$INSTALL_DIR/src"
+if [ ! -d "mbelib" ]; then
+    git clone --depth 1 https://github.com/szechyjs/mbelib.git
+fi
+cd mbelib
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j "$(nproc)"
+sudo cmake --install build
+sudo ldconfig
+
 # ---- DSD-FME ----
 echo ""
-echo "[3/5] Building DSD-FME..."
+echo "[4/6] Building DSD-FME..."
 cd "$INSTALL_DIR/src"
 if [ ! -d "dsd-fme" ]; then
     git clone --depth 1 https://github.com/lwvmobile/dsd-fme.git
@@ -78,7 +91,7 @@ echo "  DSD-FME installed: $(which dsd-fme)"
 
 # ---- OP25 ----
 echo ""
-echo "[4/5] Building OP25..."
+echo "[5/6] Building OP25..."
 cd "$INSTALL_DIR/src"
 if [ ! -d "op25" ]; then
     git clone --depth 1 https://github.com/boatbod/op25.git
@@ -98,7 +111,7 @@ echo "  OP25 installed"
 
 # ---- aptdec ----
 echo ""
-echo "[5/5] Building aptdec..."
+echo "[6/6] Building aptdec..."
 cd "$INSTALL_DIR/src"
 if [ ! -d "aptdec" ]; then
     git clone --recursive --depth 1 https://github.com/Xerbo/aptdec.git
