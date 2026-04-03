@@ -1,11 +1,16 @@
 import asyncio
 import logging
+import time
 from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 _clients: set[WebSocket] = set()
+
+# Throttle: track last broadcast time per frequency (rounded to nearest kHz)
+_last_broadcast: dict[int, float] = {}
+_BROADCAST_INTERVAL_S = 2.0  # minimum seconds between updates for the same frequency
 
 
 def signal_broadcast(frequency_hz, bandwidth_hz, power, modulation="unknown", protocol=None):
@@ -24,8 +29,22 @@ def signal_broadcast(frequency_hz, bandwidth_hz, power, modulation="unknown", pr
 
 async def broadcast(message: dict):
     global _clients
+
+    # Throttle per-frequency updates to avoid overwhelming the UI
+    freq_key = int(message.get("frequency_hz", 0) / 1000)  # round to kHz
+    now = time.monotonic()
+    last = _last_broadcast.get(freq_key, 0)
+    if now - last < _BROADCAST_INTERVAL_S:
+        return
+    _last_broadcast[freq_key] = now
+
+    # Prune old entries periodically
+    if len(_last_broadcast) > 5000:
+        cutoff = now - 60
+        _last_broadcast.clear()
+
     disconnected = set()
-    for ws in _clients:
+    for ws in list(_clients):
         try:
             await ws.send_json(message)
         except Exception:

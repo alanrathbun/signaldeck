@@ -90,7 +90,7 @@ class AudioPlayer {
         // Subscribe to the desired frequency
         this.ws.send(JSON.stringify({
           type: 'subscribe',
-          frequency: freqHz,
+          frequency_hz: freqHz,
         }));
         this.playing = true;
         this.subscribedFreq = freqHz;

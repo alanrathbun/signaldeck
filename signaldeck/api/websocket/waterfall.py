@@ -20,8 +20,9 @@ def fft_broadcast(center_freq_hz, sample_rate, power_db):
 
 
 async def broadcast_fft(message: dict):
+    global _waterfall_clients
     disconnected = set()
-    for ws in _waterfall_clients:
+    for ws in list(_waterfall_clients):
         try:
             await ws.send_json(message)
         except Exception:
