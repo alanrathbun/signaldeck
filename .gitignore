@@ -6,3 +6,16 @@ data/
 .eggs/
 dist/
 build/
+
+# Credentials (generated at runtime, never commit)
+config/credentials.yaml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
