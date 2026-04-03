@@ -22,6 +22,23 @@ function dashboard() {
     liveSignals: [],
     liveFilterMod: '',
     liveFilterProto: '',
+    liveFilterMinPower: null,
+    liveFilterFreq: '',
+    liveSortKey: 'power',
+    liveSortAsc: false,
+    showColumnPicker: false,
+    liveVisibleCols: JSON.parse(localStorage.getItem('signaldeck_live_cols') || 'null')
+      || ['frequency', 'power', 'modulation', 'protocol', 'hits', 'last_seen'],
+    allLiveColumns: [
+      { key: 'frequency', label: 'Frequency' },
+      { key: 'bandwidth', label: 'Bandwidth' },
+      { key: 'power', label: 'Power' },
+      { key: 'modulation', label: 'Modulation' },
+      { key: 'protocol', label: 'Protocol' },
+      { key: 'hits', label: 'Hits' },
+      { key: 'last_seen', label: 'Last Seen' },
+      { key: 'summary', label: 'Summary' },
+    ],
 
     // --- Signals Page ---
     signals: [],
@@ -60,6 +77,7 @@ function dashboard() {
     editSettings: {
       gain: 40,
       squelch_offset: 10,
+      min_signal_strength: -50,
       dwell_time_ms: 50,
       fft_size: 1024,
       scan_ranges: [],
@@ -117,6 +135,9 @@ function dashboard() {
           this.charts = new Charts();
         }
       });
+
+      // Fetch scanner status (needed to know if gqrx backend)
+      this.fetchStatus();
 
       // Fetch initial data for current page
       this.fetchPageData();
@@ -243,12 +264,13 @@ function dashboard() {
         const sig = data.signal || data;
         const idx = this.liveSignals.findIndex(s => s.frequency === sig.frequency);
         if (idx >= 0) {
-          this.liveSignals[idx] = { ...this.liveSignals[idx], ...sig, _updated: Date.now() };
+          const prev = this.liveSignals[idx];
+          this.liveSignals[idx] = { ...prev, ...sig, _updated: Date.now(), _hits: (prev._hits || 1) + 1 };
         } else {
-          this.liveSignals.push({ ...sig, _updated: Date.now() });
+          this.liveSignals.push({ ...sig, _updated: Date.now(), _hits: 1 });
         }
-        // Remove stale signals (older than 30 seconds)
-        const cutoff = Date.now() - 30000;
+        // Remove stale signals (older than 60 seconds)
+        const cutoff = Date.now() - 60000;
         this.liveSignals = this.liveSignals.filter(s => s._updated > cutoff);
 
         // Forward to map if position data
@@ -386,6 +408,7 @@ function dashboard() {
         }
         if (settings.scanner) {
           this.editSettings.squelch_offset = settings.scanner.squelch_offset ?? 10;
+          this.editSettings.min_signal_strength = settings.scanner.min_signal_strength ?? -50;
           this.editSettings.dwell_time_ms = settings.scanner.dwell_time_ms ?? 50;
           this.editSettings.fft_size = settings.scanner.fft_size ?? 1024;
           this.editSettings.scan_ranges = (settings.scanner.sweep_ranges || []).map(r => ({
@@ -495,8 +518,65 @@ function dashboard() {
       return this.liveSignals.filter(s => {
         if (this.liveFilterMod && s.modulation !== this.liveFilterMod) return false;
         if (this.liveFilterProto && s.protocol !== this.liveFilterProto) return false;
+        if (this.liveFilterMinPower && s.power < this.liveFilterMinPower) return false;
+        if (this.liveFilterFreq) {
+          const mhz = (s.frequency || 0) / 1e6;
+          const f = this.liveFilterFreq.trim();
+          if (f.includes('-')) {
+            const [lo, hi] = f.split('-').map(Number);
+            if (mhz < lo || mhz > hi) return false;
+          } else {
+            if (!mhz.toFixed(3).includes(f)) return false;
+          }
+        }
         return true;
       });
+    },
+
+    get sortedLiveSignals() {
+      const key = this.liveSortKey;
+      const asc = this.liveSortAsc;
+      return [...this.filteredLiveSignals].sort((a, b) => {
+        let va = a[key], vb = b[key];
+        if (key === '_hits') { va = a._hits || 1; vb = b._hits || 1; }
+        if (key === 'hits') { va = a._hits || 1; vb = b._hits || 1; }
+        if (typeof va === 'string') va = (va || '').toLowerCase();
+        if (typeof vb === 'string') vb = (vb || '').toLowerCase();
+        if (va < vb) return asc ? -1 : 1;
+        if (va > vb) return asc ? 1 : -1;
+        return 0;
+      });
+    },
+
+    sortLive(key) {
+      if (this.liveSortKey === key) {
+        this.liveSortAsc = !this.liveSortAsc;
+      } else {
+        this.liveSortKey = key;
+        this.liveSortAsc = key === 'frequency';  // ascending for freq, descending for others
+      }
+    },
+
+    liveSortIcon(key) {
+      if (this.liveSortKey !== key) return '';
+      return this.liveSortAsc ? '\u25B2' : '\u25BC';
+    },
+
+    toggleLiveCol(key) {
+      const idx = this.liveVisibleCols.indexOf(key);
+      if (idx >= 0) {
+        this.liveVisibleCols.splice(idx, 1);
+      } else {
+        this.liveVisibleCols.push(key);
+      }
+      localStorage.setItem('signaldeck_live_cols', JSON.stringify(this.liveVisibleCols));
+    },
+
+    clearLiveFilters() {
+      this.liveFilterMod = '';
+      this.liveFilterProto = '';
+      this.liveFilterMinPower = null;
+      this.liveFilterFreq = '';
     },
 
     get liveModulations() {
@@ -534,22 +614,32 @@ function dashboard() {
       this.fetchBookmarks();
     },
 
+    isGqrxBackend() {
+      return this.scannerStatus && this.scannerStatus.backend === 'gqrx';
+    },
+
     startAudio() {
       if (!this.audioFreqMhz) {
         this.showToast('Enter a frequency first', 'error');
         return;
       }
       if (this.audioPlayer) {
+        // Always subscribe via WebSocket — this tells the backend to tune
         this.audioPlayer.subscribe(this.audioFreqMhz * 1e6);
-        this.audioPlayer.setVolume(this.audioVolume);
         this.audioPlaying = true;
 
-        // Poll VU level
-        this._vuInterval = setInterval(() => {
-          if (this.audioPlayer) {
-            this.audioLevel = this.audioPlayer.peakLevel || 0;
-          }
-        }, 50);
+        if (this.isGqrxBackend()) {
+          // gqrx handles audio output directly — no web audio needed
+          this.showToast('Tuned gqrx to ' + this.audioFreqMhz + ' MHz — audio plays through gqrx', 'success');
+        } else {
+          this.audioPlayer.setVolume(this.audioVolume);
+          // Poll VU level
+          this._vuInterval = setInterval(() => {
+            if (this.audioPlayer) {
+              this.audioLevel = this.audioPlayer.peakLevel || 0;
+            }
+          }, 50);
+        }
       }
     },
 
