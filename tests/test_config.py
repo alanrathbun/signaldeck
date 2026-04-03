@@ -42,3 +42,11 @@ def test_load_config_missing_file_raises():
         assert False, "Should have raised"
     except FileNotFoundError:
         pass
+
+
+def test_default_config_has_gqrx_settings():
+    """Default config includes gqrx auto-detect settings."""
+    from signaldeck.config import load_config
+    cfg = load_config(None)
+    assert cfg["devices"]["gqrx_auto_detect"] is True
+    assert cfg["devices"]["gqrx_instances"] == []

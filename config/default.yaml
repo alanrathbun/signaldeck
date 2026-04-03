@@ -3,9 +3,12 @@
 devices:
   auto_discover: true
   gain: 40  # dB, overridden per device if needed
+  gqrx_auto_detect: true   # try connecting to gqrx on localhost:7356
+  gqrx_instances: []        # additional gqrx instances: [{host: "192.168.1.50", port: 7356}]
 
 scanner:
   squelch_offset: 10  # dB above noise floor
+  min_signal_strength: -50  # dBFS, ignore signals weaker than this
   dwell_time_ms: 50   # time per frequency step
   fft_size: 1024
   sweep_ranges:
