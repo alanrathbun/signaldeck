@@ -5,7 +5,7 @@ from signaldeck.config import load_config
 
 def test_load_default_config():
     """Loading with no path returns defaults."""
-    cfg = load_config(None)
+    cfg = load_config(None, load_user_settings=False)
     assert cfg["scanner"]["fft_size"] == 1024
     assert cfg["scanner"]["squelch_offset"] == 10
     assert isinstance(cfg["scanner"]["sweep_ranges"], list)
@@ -47,6 +47,6 @@ def test_load_config_missing_file_raises():
 def test_default_config_has_gqrx_settings():
     """Default config includes gqrx auto-detect settings."""
     from signaldeck.config import load_config
-    cfg = load_config(None)
+    cfg = load_config(None, load_user_settings=False)
     assert cfg["devices"]["gqrx_auto_detect"] is True
     assert cfg["devices"]["gqrx_instances"] == []

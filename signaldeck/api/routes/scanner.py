@@ -1,7 +1,13 @@
+import logging
+from pathlib import Path
+
+import yaml
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 from signaldeck.api.server import get_config
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["scanner"])
 
@@ -9,6 +15,7 @@ router = APIRouter(tags=["scanner"])
 _scanner_state = {
     "status": "running",  # set by CLI on startup
     "mode": "sweep",
+    "backend": "soapysdr",  # "soapysdr" or "gqrx"
     "active_devices": 0,
 }
 
@@ -68,6 +75,7 @@ class ScanRangeUpdate(BaseModel):
 class SettingsUpdate(BaseModel):
     gain: float | None = None
     squelch_offset: float | None = None
+    min_signal_strength: float | None = None
     dwell_time_ms: float | None = None
     fft_size: int | None = None
     scan_ranges: list[ScanRangeUpdate] | None = None
@@ -91,6 +99,10 @@ async def update_settings(data: SettingsUpdate):
         config["scanner"]["squelch_offset"] = data.squelch_offset
         changed.append(f"squelch_offset={data.squelch_offset}")
 
+    if data.min_signal_strength is not None:
+        config["scanner"]["min_signal_strength"] = data.min_signal_strength
+        changed.append(f"min_signal_strength={data.min_signal_strength}")
+
     if data.dwell_time_ms is not None:
         config["scanner"]["dwell_time_ms"] = data.dwell_time_ms
         changed.append(f"dwell_time_ms={data.dwell_time_ms}")
@@ -106,4 +118,34 @@ async def update_settings(data: SettingsUpdate):
         ]
         changed.append(f"scan_ranges={len(data.scan_ranges)} ranges")
 
+    # Persist settings to user config file so they survive restarts
+    if changed:
+        _persist_user_config(config)
+
     return {"status": "updated", "changed": changed}
+
+
+_USER_CONFIG_PATH = Path("config/user_settings.yaml")
+
+
+def _persist_user_config(config: dict) -> None:
+    """Write the user-customizable settings to a YAML file."""
+    user_cfg = {
+        "devices": {
+            "gain": config.get("devices", {}).get("gain", 40),
+        },
+        "scanner": {
+            "squelch_offset": config["scanner"].get("squelch_offset", 10),
+            "min_signal_strength": config["scanner"].get("min_signal_strength", -50),
+            "dwell_time_ms": config["scanner"].get("dwell_time_ms", 50),
+            "fft_size": config["scanner"].get("fft_size", 1024),
+            "sweep_ranges": config["scanner"].get("sweep_ranges", []),
+        },
+    }
+    try:
+        _USER_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(_USER_CONFIG_PATH, "w") as f:
+            yaml.dump(user_cfg, f, default_flow_style=False, sort_keys=False)
+        logger.info("Settings persisted to %s", _USER_CONFIG_PATH)
+    except Exception as e:
+        logger.error("Failed to persist settings: %s", e)
