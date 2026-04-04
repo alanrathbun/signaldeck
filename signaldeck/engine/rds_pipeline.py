@@ -69,3 +69,56 @@ def fm_demodulate_baseband(
         baseband = resample_poly(baseband, up, down).astype(np.float32)
 
     return baseband
+
+
+# ---------------------------------------------------------------------------
+# RDS subcarrier extraction
+# ---------------------------------------------------------------------------
+
+def extract_rds_subcarrier(
+    baseband: NDArray[np.float32],
+    filters: dict[str, NDArray[np.float64]],
+) -> NDArray[np.float32]:
+    """Extract and demodulate the RDS subcarrier from FM baseband.
+
+    *baseband* is expected at :data:`RDS_WORKING_RATE` (228 kHz).
+    Returns a float32 array decimated to :data:`RDS_OUTPUT_RATE` (9500 Hz).
+    """
+    from scipy.signal import lfilter
+
+    fs = RDS_WORKING_RATE
+    n = len(baseband)
+
+    # 1. Bandpass the 19 kHz pilot
+    pilot = lfilter(filters["pilot_bpf"], 1.0, baseband)
+
+    # 2. Derive 57 kHz carrier reference
+    pilot_power = np.mean(pilot ** 2)
+    if pilot_power > 1e-8:
+        # Cube the pilot (19 kHz -> 57 kHz) and clean up
+        carrier_ref = pilot ** 3
+        carrier_ref = lfilter(filters["ref_bpf"], 1.0, carrier_ref)
+    else:
+        # Free-running 57 kHz cosine
+        t = np.arange(n, dtype=np.float32) / fs
+        carrier_ref = np.cos(2.0 * np.pi * 57000.0 * t)
+
+    # Normalise carrier reference
+    peak = np.max(np.abs(carrier_ref))
+    if peak > 0:
+        carrier_ref = carrier_ref / peak
+
+    # 3. Bandpass the RDS band (54.6 - 59.4 kHz)
+    rds_band = lfilter(filters["rds_bpf"], 1.0, baseband)
+
+    # 4. Coherent demodulation
+    mixed = rds_band * carrier_ref
+
+    # 5. Lowpass
+    demod = lfilter(filters["rds_lpf"], 1.0, mixed).astype(np.float32)
+
+    # 6. Decimate by 24 (228000 / 9500 = 24)
+    decimation = fs // RDS_OUTPUT_RATE
+    output = demod[::decimation]
+
+    return output.astype(np.float32)
