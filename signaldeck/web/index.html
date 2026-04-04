@@ -578,52 +578,156 @@
           </div>
         </div>
 
-        <!-- Audio (read-only info) -->
+        <!-- Device Roles -->
+        <div class="card">
+          <div class="card-header">
+            <h3>Device Roles</h3>
+          </div>
+          <div class="settings-list">
+            <div class="setting-row">
+              <label class="setting-label" for="set-scanner-device">Scanner Device</label>
+              <select id="set-scanner-device" class="form-select setting-input"
+                      x-model="editSettings.scanner_device">
+                <option value="none">None</option>
+                <template x-for="d in (settings.devices ? (settings.devices.discovered || []) : [])" :key="d.serial">
+                  <option :value="d.serial" x-text="d.label || d.serial"></option>
+                </template>
+              </select>
+            </div>
+            <div class="setting-row">
+              <label class="setting-label" for="set-tuner-device">Tuner / Player (gqrx)</label>
+              <select id="set-tuner-device" class="form-select setting-input"
+                      x-model="editSettings.tuner_device">
+                <option value="none">None</option>
+                <template x-for="g in (settings.devices ? (settings.devices.gqrx_instances || []) : [])" :key="g.host + ':' + g.port">
+                  <option :value="g.host + ':' + g.port" x-text="g.host + ':' + g.port"></option>
+                </template>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Audio (editable) -->
         <div class="card">
           <div class="card-header">
             <h3>Audio</h3>
           </div>
           <div class="settings-list">
             <div class="setting-row">
-              <span class="setting-label">Sample Rate</span>
-              <span class="setting-value" x-text="settings.audio ? settings.audio.sample_rate + ' Hz' : '--'"></span>
+              <label class="setting-label" for="set-sample-rate">Sample Rate</label>
+              <select id="set-sample-rate" class="form-select setting-input"
+                      x-model.number="editSettings.sample_rate">
+                <option value="22050">22050 Hz</option>
+                <option value="44100">44100 Hz</option>
+                <option value="48000">48000 Hz</option>
+              </select>
             </div>
             <div class="setting-row">
-              <span class="setting-label">Recording Directory</span>
-              <span class="setting-value" x-text="settings.audio ? settings.audio.recording_dir : '--'"></span>
+              <label class="setting-label" for="set-rec-dir">Recording Directory</label>
+              <input id="set-rec-dir" type="text" class="form-input setting-input"
+                     x-model="editSettings.recording_dir">
             </div>
             <div class="setting-row">
               <span class="setting-label">Format</span>
-              <span class="setting-value" x-text="settings.audio ? settings.audio.format.toUpperCase() : '--'"></span>
+              <span class="setting-value">WAV</span>
             </div>
           </div>
         </div>
 
-        <!-- Storage (read-only) -->
+        <!-- Logging -->
         <div class="card">
           <div class="card-header">
-            <h3>Storage</h3>
+            <h3>Logging</h3>
           </div>
           <div class="settings-list">
             <div class="setting-row">
-              <span class="setting-label">Database Path</span>
-              <span class="setting-value" x-text="settings.storage ? settings.storage.database_path : '--'"></span>
+              <label class="setting-label" for="set-log-level">Log Level</label>
+              <select id="set-log-level" class="form-select setting-input"
+                      x-model="editSettings.log_level">
+                <option value="DEBUG">DEBUG</option>
+                <option value="INFO">INFO</option>
+                <option value="WARNING">WARNING</option>
+                <option value="ERROR">ERROR</option>
+              </select>
             </div>
           </div>
         </div>
 
-        <!-- Authentication (read-only) -->
+        <!-- Authentication -->
         <div class="card">
           <div class="card-header">
             <h3>Authentication</h3>
+            <span class="badge" :class="settings.auth && settings.auth.enabled ? 'badge-green' : 'badge-orange'"
+                  x-text="settings.auth && settings.auth.enabled ? 'Enabled' : 'Disabled'"></span>
           </div>
           <div class="settings-list">
             <div class="setting-row">
               <span class="setting-label">Status</span>
-              <span class="setting-value">
-                <span class="badge" :class="settings.auth && settings.auth.enabled ? 'badge-green' : 'badge-orange'"
-                      x-text="settings.auth && settings.auth.enabled ? 'Enabled' : 'Disabled'"></span>
-              </span>
+              <button class="btn btn-small"
+                      :class="settings.auth && settings.auth.enabled ? 'btn-danger' : 'btn-success'"
+                      @click="toggleAuth()">
+                <span x-text="settings.auth && settings.auth.enabled ? 'Disable Auth' : 'Enable Auth'"></span>
+              </button>
+            </div>
+            <template x-if="settings.auth && settings.auth.enabled">
+              <div>
+                <div class="setting-row">
+                  <span class="setting-label">API Token</span>
+                  <div style="display:flex;gap:8px;align-items:center">
+                    <code style="font-size:0.8em;background:#161b22;padding:4px 8px;border-radius:4px"
+                          x-text="showApiToken ? (currentApiToken || '...') : '••••••••'"></code>
+                    <button class="btn btn-small btn-primary" @click="showApiToken = !showApiToken; if(showApiToken) fetchApiToken()">
+                      <span x-text="showApiToken ? 'Hide' : 'Show'"></span>
+                    </button>
+                    <button class="btn btn-small btn-primary" @click="copyApiToken()" x-show="showApiToken">Copy</button>
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <span class="setting-label">Regenerate Token</span>
+                  <button class="btn btn-small btn-danger" @click="if(confirm('Regenerate API token? All existing tokens will be invalidated.')) regenerateToken()">
+                    Regenerate
+                  </button>
+                </div>
+                <div class="setting-row" style="flex-direction:column;align-items:flex-start;gap:8px">
+                  <span class="setting-label">Change Password</span>
+                  <div style="display:flex;gap:8px;flex-wrap:wrap">
+                    <input type="password" class="form-input" placeholder="Current password"
+                           x-model="changePass.current" style="width:160px">
+                    <input type="password" class="form-input" placeholder="New password"
+                           x-model="changePass.newPass" style="width:160px">
+                    <input type="password" class="form-input" placeholder="Confirm"
+                           x-model="changePass.confirm" style="width:160px">
+                    <button class="btn btn-small btn-success" @click="changePassword()">Change</button>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- Data Management -->
+        <div class="card">
+          <div class="card-header">
+            <h3>Data Management</h3>
+          </div>
+          <div class="settings-list">
+            <div class="setting-row">
+              <span class="setting-label">Database</span>
+              <span class="setting-value" style="font-size:0.85em"
+                    x-text="settings.storage ? settings.storage.database_path : '--'"></span>
+            </div>
+            <div class="setting-row" style="flex-wrap:wrap;gap:8px">
+              <button class="btn btn-small btn-danger" @click="clearData('signals')">Clear Signals</button>
+              <button class="btn btn-small btn-danger" @click="clearData('activity')">Clear Activity</button>
+              <button class="btn btn-small btn-danger" @click="clearData('bookmarks')">Clear Bookmarks</button>
+              <button class="btn btn-small btn-danger" @click="clearData('recordings')">Clear Recordings</button>
+              <button class="btn btn-small btn-danger" @click="deleteLogs()">Delete All Logs</button>
+            </div>
+            <div class="setting-row">
+              <button class="btn btn-danger"
+                      @click="if(confirm('Reset ALL data? This cannot be undone.')) clearData('all')">
+                Reset All Data
+              </button>
             </div>
           </div>
         </div>

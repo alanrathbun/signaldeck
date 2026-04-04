@@ -80,6 +80,11 @@ function dashboard() {
       dwell_time_ms: 50,
       fft_size: 1024,
       scan_ranges: [],
+      sample_rate: 48000,
+      recording_dir: 'data/recordings',
+      log_level: 'INFO',
+      scanner_device: 'none',
+      tuner_device: 'none',
     },
 
     // --- Map ---
@@ -93,6 +98,9 @@ function dashboard() {
     authRequired: false,
     apiToken: localStorage.getItem('signaldeck_token') || null,
     loginError: '',
+    showApiToken: false,
+    currentApiToken: null,
+    changePass: { current: '', newPass: '', confirm: '' },
 
     // --- Toasts ---
     toasts: [],
@@ -424,13 +432,26 @@ function dashboard() {
         if (settings.devices) {
           this.scannerStatus.gain = settings.devices.gain;
         }
+        if (settings.audio) {
+          this.editSettings.sample_rate = settings.audio.sample_rate || 48000;
+          this.editSettings.recording_dir = settings.audio.recording_dir || 'data/recordings';
+        }
+        if (settings.logging) {
+          this.editSettings.log_level = settings.logging.level || 'INFO';
+        }
       }
     },
 
     async saveSettings() {
+      const payload = {
+        ...this.editSettings,
+        log_level: this.editSettings.log_level,
+        sample_rate: this.editSettings.sample_rate,
+        recording_dir: this.editSettings.recording_dir,
+      };
       const data = await this.apiFetch('/api/settings', {
         method: 'PUT',
-        body: JSON.stringify(this.editSettings),
+        body: JSON.stringify(payload),
       });
       if (data) {
         this.showToast('Settings saved. Changes take effect on next scan cycle.', 'success');
@@ -465,6 +486,105 @@ function dashboard() {
             this.charts.drawActivityChart('activity-chart', data.hourly || data.hourly_counts);
           }
         });
+      }
+    },
+
+    async toggleAuth() {
+      const current = this.settings.auth && this.settings.auth.enabled;
+      const action = current ? 'disable' : 'enable';
+      if (!confirm(`${action.charAt(0).toUpperCase() + action.slice(1)} authentication?`)) return;
+      try {
+        const resp = await this.apiFetch('/api/auth/toggle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: !current }),
+        });
+        if (resp) {
+          this.showToast(`Authentication ${!current ? 'enabled' : 'disabled'}`, 'success');
+          this.fetchStatus();
+        }
+      } catch (e) {
+        this.showToast('Failed to toggle auth', 'error');
+      }
+    },
+
+    async fetchApiToken() {
+      try {
+        const data = await this.apiFetch('/api/auth/token');
+        if (data) {
+          this.currentApiToken = data.api_token;
+        }
+      } catch (e) { /* ignore */ }
+    },
+
+    async copyApiToken() {
+      if (this.currentApiToken) {
+        await navigator.clipboard.writeText(this.currentApiToken);
+        this.showToast('Token copied to clipboard', 'success');
+      }
+    },
+
+    async regenerateToken() {
+      try {
+        const data = await this.apiFetch('/api/auth/regenerate-token', { method: 'POST' });
+        if (data) {
+          this.currentApiToken = data.api_token;
+          this.apiToken = data.api_token;
+          localStorage.setItem('signaldeck_token', data.api_token);
+          this.showToast('API token regenerated', 'success');
+        }
+      } catch (e) {
+        this.showToast('Failed to regenerate token', 'error');
+      }
+    },
+
+    async changePassword() {
+      if (this.changePass.newPass !== this.changePass.confirm) {
+        this.showToast('Passwords do not match', 'error');
+        return;
+      }
+      try {
+        const data = await this.apiFetch('/api/auth/change-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: 'admin',
+            current_password: this.changePass.current,
+            new_password: this.changePass.newPass,
+          }),
+        });
+        if (data) {
+          this.showToast('Password changed', 'success');
+          this.changePass = { current: '', newPass: '', confirm: '' };
+        } else {
+          this.showToast('Invalid current password', 'error');
+        }
+      } catch (e) {
+        this.showToast('Failed to change password', 'error');
+      }
+    },
+
+    async clearData(target) {
+      if (!confirm(`Clear ${target}? This cannot be undone.`)) return;
+      try {
+        const data = await this.apiFetch(`/api/data/${target}`, { method: 'DELETE' });
+        if (data) {
+          this.showToast(`${target} cleared`, 'success');
+        }
+      } catch (e) {
+        this.showToast(`Failed to clear ${target}`, 'error');
+      }
+    },
+
+    async deleteLogs() {
+      if (!confirm('Delete all log files except the current session?')) return;
+      try {
+        const data = await this.apiFetch('/api/logs', { method: 'DELETE' });
+        if (data) {
+          this.showToast(`Deleted ${data.deleted} log file(s)`, 'success');
+        }
+      } catch (e) {
+        this.showToast('Failed to delete logs', 'error');
       }
     },
 
