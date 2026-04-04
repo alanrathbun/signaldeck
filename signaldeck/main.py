@@ -7,6 +7,7 @@ import click
 
 from signaldeck import __version__
 from signaldeck.config import load_config
+from signaldeck.engine.channelizer import channelize
 
 
 def setup_logging(level: str, log_dir: str = "data/logs") -> Path:
@@ -225,9 +226,11 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                 # Filter out weak signals below the minimum strength threshold
                 if sig.peak_power < min_strength:
                     continue
+                # Snap to nearest standard channel frequency
+                freq_hz = channelize(sig.frequency_hz)
                 # Classify the signal
                 signal_info = SignalInfo(
-                    frequency_hz=sig.frequency_hz,
+                    frequency_hz=freq_hz,
                     bandwidth_hz=sig.bandwidth_hz,
                     peak_power=sig.peak_power,
                     modulation="unknown",
@@ -235,7 +238,7 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                 classified = classifier.classify(signal_info)
 
                 db_signal = Signal(
-                    frequency=sig.frequency_hz,
+                    frequency=freq_hz,
                     bandwidth=sig.bandwidth_hz,
                     modulation=classified.modulation,
                     protocol=classified.protocol_hint or None,
@@ -255,7 +258,7 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                     strength=sig.peak_power,
                     decoder_used=None,
                     result_type=classified.protocol_hint or "unknown",
-                    summary=f"{sig.frequency_hz / 1e6:.3f} MHz "
+                    summary=f"{freq_hz / 1e6:.3f} MHz "
                             f"[{proto_label}] {sig.peak_power:.1f} dBFS",
                 )
                 await db.insert_activity(entry)
@@ -264,7 +267,7 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                 if ws_broadcast:
                     broadcast_fn, msg_fn = ws_broadcast
                     msg = msg_fn(
-                        frequency_hz=sig.frequency_hz,
+                        frequency_hz=freq_hz,
                         bandwidth_hz=sig.bandwidth_hz,
                         power=sig.peak_power,
                         modulation=classified.modulation,
