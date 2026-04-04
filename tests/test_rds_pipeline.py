@@ -250,3 +250,29 @@ async def test_insert_and_get_decoder_result(tmp_path):
     assert rds["ps_name"] == "WXYZ FM"
 
     await db.close()
+
+
+# ── Task 9 — RDS API endpoint ─────────────────────────────────────────────
+
+def test_rds_api_endpoint(tmp_path):
+    from starlette.testclient import TestClient
+    from signaldeck.api.server import create_app
+
+    config = {
+        "storage": {"database_path": str(tmp_path / "test.db")},
+        "audio": {"recording_dir": str(tmp_path / "recordings")},
+        "scanner": {
+            "squelch_offset": 10, "dwell_time_ms": 50,
+            "fft_size": 1024,
+            "sweep_ranges": [{"label": "FM", "start_mhz": 88, "end_mhz": 108}],
+        },
+        "devices": {"auto_discover": False, "gain": 40},
+        "logging": {"level": "DEBUG"},
+    }
+    app = create_app(config)
+    with TestClient(app) as client:
+        resp = client.get("/api/signals/rds/98500000")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["frequency_hz"] == 98500000
+        assert data["rds"] is None

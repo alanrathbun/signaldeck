@@ -6,6 +6,13 @@ from signaldeck.api.server import get_config, get_db
 
 router = APIRouter()
 
+@router.get("/signals/rds/{frequency_hz}")
+async def get_rds_data(frequency_hz: int):
+    """Return accumulated RDS metadata for a specific frequency."""
+    db = get_db()
+    rds = await db.get_rds_for_frequency(float(frequency_hz))
+    return {"frequency_hz": frequency_hz, "rds": rds}
+
 @router.get("/signals/enrichment")
 async def signal_enrichment():
     """Return database signal data keyed by frequency (Hz) for frontend enrichment."""
@@ -38,6 +45,15 @@ async def signal_enrichment():
         else:
             entry["last_activity"] = None
         result[freq_key] = entry
+
+    # Enrich with RDS data for FM signals
+    for s in signals:
+        freq_key = str(int(s.frequency))
+        if freq_key in result and s.protocol == "broadcast_fm":
+            rds = await db.get_rds_for_frequency(s.frequency)
+            if rds:
+                result[freq_key]["rds"] = rds
+
     return result
 
 @router.get("/signals")
