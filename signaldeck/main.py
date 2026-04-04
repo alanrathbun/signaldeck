@@ -174,11 +174,28 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
             await db.close()
             return
 
+        # Pick which SDR to use for scanning based on config
+        scanner_pref = cfg.get("devices", {}).get("scanner_device")
+        def _pick_scanner_device(hw_list, pref):
+            """Select the preferred scanner device by serial or driver name."""
+            if pref and pref != "none":
+                for d in hw_list:
+                    if d.serial == pref or d.driver == pref:
+                        return d
+                logger.warning("Preferred scanner device '%s' not found, falling back", pref)
+            # Default: prefer rtlsdr over hackrf for scanning (lower noise floor)
+            for d in hw_list:
+                if d.driver == "rtlsdr":
+                    return d
+            return hw_list[0] if hw_list else None
+
+        scan_dev_info = _pick_scanner_device(hw_devices, scanner_pref)
+
         # Open SoapySDR device for scanning (if available)
         device = None
-        if hw_devices:
+        if scan_dev_info:
             try:
-                device = mgr.open(driver=hw_devices[0].driver, serial=hw_devices[0].serial)
+                device = mgr.open(driver=scan_dev_info.driver, serial=scan_dev_info.serial)
                 # Test that we can actually use the device (USB interface may be busy)
                 device.start_stream()
                 test_buf = device.read_samples(1024)
@@ -186,7 +203,7 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                 if test_buf is None:
                     raise RuntimeError("Device opened but cannot read samples (USB busy?)")
                 device.set_gain(cfg["devices"]["gain"])
-                logger.info("Scanning with: %s (%s)", hw_devices[0].label, hw_devices[0].driver)
+                logger.info("Scanning with: %s (%s)", scan_dev_info.label, scan_dev_info.driver)
             except Exception as e:
                 logger.warning("Cannot use SDR device: %s — falling back to gqrx-only mode", e)
                 try:
@@ -200,8 +217,17 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
         # Open gqrx as tuner/player if available
         gqrx_device = None
         if gqrx_devices:
+            # Pick preferred gqrx instance from config
+            tuner_pref = cfg.get("devices", {}).get("tuner_device")
+            gd = gqrx_devices[0]  # default to first
+            if tuner_pref and tuner_pref != "none":
+                for d in gqrx_devices:
+                    if d.serial == tuner_pref:
+                        gd = d
+                        break
+                else:
+                    logger.warning("Preferred tuner device '%s' not found, using %s", tuner_pref, gd.serial)
             try:
-                gd = gqrx_devices[0]
                 gqrx_host, gqrx_port_str = gd.serial.split(":")
                 gqrx_device = await mgr.open_gqrx(host=gqrx_host, port=int(gqrx_port_str))
                 logger.info("gqrx connected at %s — select a signal to tune", gd.serial)
@@ -372,54 +398,106 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
         # Track gqrx tuning state so we don't re-send the same frequency
         _gqrx_tuned_freq = None
 
-        async def _handle_gqrx_tuning():
-            """Check if user selected a frequency and tune gqrx to it.
+        # Map SignalDeck modulation labels to gqrx demod mode strings
+        _MODULATION_TO_GQRX_MODE = {
+            "FM": "WFM",       # broadcast FM → wideband FM
+            "AM": "AM",
+            "NFM": "FM",       # narrowband FM
+            "USB": "USB",
+            "LSB": "LSB",
+            "CW": "CW",
+        }
 
-            Also enables RDS for FM broadcasts and polls for RDS data.
+        def _gqrx_mode_for(modulation: str | None, freq_hz: float) -> str:
+            """Pick the right gqrx demod mode from modulation label + frequency."""
+            if modulation:
+                mode = _MODULATION_TO_GQRX_MODE.get(modulation.upper())
+                if mode:
+                    return mode
+                # "FM" from classifier could be narrowband or wideband
+                if modulation.upper() == "FM":
+                    if 87_500_000 <= freq_hz <= 108_000_000:
+                        return "WFM"
+                    return "FM"  # narrowband FM for VHF/UHF
+            # Fallback: guess from frequency
+            if 87_500_000 <= freq_hz <= 108_000_000:
+                return "WFM"
+            if 118_000_000 <= freq_hz <= 137_000_000:
+                return "AM"
+            return "FM"  # narrowband FM default
+
+        async def _gqrx_tuning_loop():
+            """Continuously poll for tuning requests and RDS data.
+
+            Runs as a separate task so it responds immediately even while
+            the scanner is mid-sweep.
             """
             nonlocal _gqrx_tuned_freq
             if not gqrx_device or not audio_request_fn:
                 return
-            audio_req = audio_request_fn()
-            if audio_req.get("active") and audio_req.get("frequency_hz"):
-                freq_hz = audio_req["frequency_hz"]
-                if freq_hz != _gqrx_tuned_freq:
-                    await gqrx_device.tune(freq_hz)
-                    _gqrx_tuned_freq = freq_hz
-                    logger.debug("gqrx: tuned to %.3f MHz", freq_hz / 1e6)
-                    # Enable RDS for FM broadcast frequencies
-                    if 87_500_000 <= freq_hz <= 108_000_000:
-                        await gqrx_device.enable_rds()
+            while True:
+                try:
+                    audio_req = audio_request_fn()
+                    if audio_req.get("active") and audio_req.get("frequency_hz"):
+                        freq_hz = audio_req["frequency_hz"]
+                        if freq_hz != _gqrx_tuned_freq:
+                            # Set demodulation mode before tuning
+                            mode = _gqrx_mode_for(audio_req.get("modulation"), freq_hz)
+                            await gqrx_device.set_mode(mode)
+                            await gqrx_device.tune(freq_hz)
+                            _gqrx_tuned_freq = freq_hz
+                            logger.info("gqrx: tuned to %.3f MHz (mode=%s)", freq_hz / 1e6, mode)
+                            # Enable RDS for FM broadcast frequencies
+                            if 87_500_000 <= freq_hz <= 108_000_000:
+                                await gqrx_device.enable_rds()
 
-                # Poll gqrx for RDS data and broadcast it
-                if 87_500_000 <= freq_hz <= 108_000_000:
-                    rds = await gqrx_device.get_rds()
-                    if rds and rds.get("ps_name") and ws_broadcast:
-                        broadcast_fn, msg_fn = ws_broadcast
-                        msg = msg_fn(
-                            frequency_hz=freq_hz,
-                            bandwidth_hz=200_000,
-                            power=-30.0,
-                            modulation="FM",
-                            protocol="broadcast_fm",
-                        )
-                        msg["rds"] = rds
-                        await broadcast_fn(msg)
-            else:
-                if _gqrx_tuned_freq is not None:
-                    _gqrx_tuned_freq = None
-                    logger.debug("gqrx: idle")
+                        # Poll gqrx for RDS data and broadcast it
+                        if 87_500_000 <= freq_hz <= 108_000_000:
+                            rds = await gqrx_device.get_rds()
+                            if rds and rds.get("ps_name") and ws_broadcast:
+                                broadcast_fn, msg_fn = ws_broadcast
+                                msg = msg_fn(
+                                    frequency_hz=freq_hz,
+                                    bandwidth_hz=200_000,
+                                    power=-30.0,
+                                    modulation="FM",
+                                    protocol="broadcast_fm",
+                                )
+                                msg["rds"] = rds
+                                await broadcast_fn(msg)
+                    else:
+                        if _gqrx_tuned_freq is not None:
+                            _gqrx_tuned_freq = None
+                            logger.debug("gqrx: idle")
+                except Exception as e:
+                    logger.warning("gqrx tuning error: %s", e)
+                await asyncio.sleep(0.3)
 
+        # Clear stale signals from previous sessions
+        await db.clear_signals()
+        await db.clear_activity()
+        logger.info("Cleared stale signals from previous session")
+
+        # Respect auto_start config — only begin scanning if configured
+        auto_start = cfg["scanner"].get("auto_start", False)
         if scanner:
-            logger.info("Starting sweep across %d range(s)...", len(ranges))
+            if auto_start:
+                _scanner_state["status"] = "running"
+                logger.info("Auto-starting sweep across %d range(s)...", len(ranges))
+            else:
+                _scanner_state["status"] = "idle"
+                logger.info("Scanner ready — press Start in the dashboard to begin scanning")
         else:
             logger.info("gqrx-only mode — use the dashboard to tune frequencies")
+        # Launch gqrx tuning as a separate concurrent task so it responds
+        # immediately even while the scanner is mid-sweep
+        gqrx_task = None
+        if gqrx_device:
+            gqrx_task = asyncio.create_task(_gqrx_tuning_loop())
+
         idle_ticks = 0
         try:
             while True:
-                # If gqrx is connected, handle tuning requests from the UI
-                await _handle_gqrx_tuning()
-
                 if scanner:
                     # If no gqrx, SoapySDR can do audio (pauses scanning)
                     if not gqrx_device and audio_request_fn:
@@ -435,12 +513,54 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                             logger.info("Audio streaming ended, resuming scan")
                             continue
 
-                    # SoapySDR handles scanning
-                    signals = await scanner.sweep_once(
-                        fft_callback=on_fft,
-                        rds_callback=on_rds,
-                        rds_sample_count=131_072,
-                    )
+                    # Only sweep when scanner is set to running (via UI or auto_start)
+                    if _scanner_state["status"] != "running":
+                        await asyncio.sleep(0.5)
+                        continue
+
+                    # Apply settings changes from the UI to the running scanner
+                    scanner._fft_size = cfg["scanner"]["fft_size"]
+                    scanner._squelch_offset = cfg["scanner"]["squelch_offset"]
+                    scanner._dwell_time = cfg["scanner"]["dwell_time_ms"] / 1000.0
+                    scanner._scan_ranges = [
+                        ScanRange.from_config(r) for r in cfg["scanner"]["sweep_ranges"]
+                    ]
+                    min_strength = cfg["scanner"].get("min_signal_strength", -30)
+                    device.set_gain(cfg["devices"]["gain"])
+
+                    # SoapySDR handles scanning — respect selected mode
+                    scan_mode = _scanner_state.get("mode", "sweep")
+                    if scan_mode == "bookmarks":
+                        bookmarks = await db.get_all_bookmarks()
+                        if bookmarks:
+                            # Build temporary scan ranges from bookmark frequencies
+                            bk_ranges = [
+                                ScanRange(
+                                    start_hz=bk.frequency - 100_000,
+                                    end_hz=bk.frequency + 100_000,
+                                    step_hz=200_000,
+                                    label=bk.label,
+                                )
+                                for bk in bookmarks
+                            ]
+                            old_ranges = scanner._scan_ranges
+                            scanner._scan_ranges = bk_ranges
+                            signals = await scanner.sweep_once(
+                                fft_callback=on_fft,
+                                rds_callback=on_rds,
+                                rds_sample_count=131_072,
+                            )
+                            scanner._scan_ranges = old_ranges
+                        else:
+                            signals = []
+                            await asyncio.sleep(1)  # no bookmarks, don't spin
+                    else:
+                        # "sweep" and "smart" both do a full sweep
+                        signals = await scanner.sweep_once(
+                            fft_callback=on_fft,
+                            rds_callback=on_rds,
+                            rds_sample_count=131_072,
+                        )
                     if signals:
                         await on_signals(signals)
                 else:
@@ -454,6 +574,8 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
         except KeyboardInterrupt:
             pass
         finally:
+            if gqrx_task:
+                gqrx_task.cancel()
             if device:
                 device.close()
             if gqrx_device:

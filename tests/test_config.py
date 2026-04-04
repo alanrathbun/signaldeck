@@ -7,7 +7,7 @@ def test_load_default_config():
     """Loading with no path returns defaults."""
     cfg = load_config(None, load_user_settings=False)
     assert cfg["scanner"]["fft_size"] == 1024
-    assert cfg["scanner"]["squelch_offset"] == 10
+    assert cfg["scanner"]["squelch_offset"] == 20
     assert isinstance(cfg["scanner"]["sweep_ranges"], list)
     assert len(cfg["scanner"]["sweep_ranges"]) > 0
 

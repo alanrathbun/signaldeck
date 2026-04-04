@@ -13,7 +13,7 @@ router = APIRouter(tags=["scanner"])
 
 # Scanner state (in-memory, managed by the CLI start command)
 _scanner_state = {
-    "status": "running",  # set by CLI on startup
+    "status": "idle",  # starts idle; set to "running" by auto_start or UI button
     "mode": "sweep",
     "backend": "soapysdr",  # "soapysdr" or "gqrx"
     "active_devices": 0,
@@ -39,10 +39,17 @@ async def scanner_status():
     }
 
 
+class StartScannerRequest(BaseModel):
+    mode: str = "sweep"
+
+
 @router.post("/scanner/start")
-async def scanner_start():
+async def scanner_start(data: StartScannerRequest = None):
+    if data is None:
+        data = StartScannerRequest()
     _scanner_state["status"] = "running"
-    return {"status": "running", "message": "Scanner is running (managed by engine)"}
+    _scanner_state["mode"] = data.mode
+    return {"status": "running", "mode": data.mode, "message": f"Scanner running in {data.mode} mode"}
 
 
 @router.post("/scanner/stop")

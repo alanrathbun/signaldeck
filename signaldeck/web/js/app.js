@@ -708,7 +708,7 @@ function dashboard() {
         return;
       }
       const payload = {
-        frequency: this.newBookmark.frequency * 1e6, // MHz to Hz
+        frequency_hz: this.newBookmark.frequency * 1e6, // MHz to Hz
         label: this.newBookmark.label,
         modulation: this.newBookmark.modulation,
         decoder: this.newBookmark.decoder,
@@ -857,8 +857,9 @@ function dashboard() {
       this.audioFreqMhz = freqHz / 1e6;
     },
 
-    tuneAndListen(freqHz) {
+    tuneAndListen(freqHz, modulation) {
       this.audioFreqMhz = freqHz / 1e6;
+      this._tuneModulation = modulation || null;
       this.startAudio();
     },
 
@@ -889,7 +890,8 @@ function dashboard() {
       }
       if (this.audioPlayer) {
         // Always subscribe via WebSocket — this tells the backend to tune
-        this.audioPlayer.subscribe(this.audioFreqMhz * 1e6);
+        this.audioPlayer.subscribe(this.audioFreqMhz * 1e6, this._tuneModulation);
+        this._tuneModulation = null;
         this.audioPlaying = true;
 
         if (this.isGqrxBackend()) {
