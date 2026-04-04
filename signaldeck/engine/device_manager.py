@@ -64,8 +64,12 @@ class SDRDevice:
         else:
             ret_code = status
         if ret_code < 0:
-            logger.warning("Read error: %d", ret_code)
+            self._consecutive_errors = getattr(self, "_consecutive_errors", 0) + 1
+            # Log first error and then every 50th to avoid spam
+            if self._consecutive_errors == 1 or self._consecutive_errors % 50 == 0:
+                logger.warning("Read error: %d (occurred %d times)", ret_code, self._consecutive_errors)
             return None
+        self._consecutive_errors = 0
         return buf[:ret_code] if ret_code < num_samples else buf
 
     def close(self) -> None:

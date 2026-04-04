@@ -153,11 +153,25 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
         # Open SoapySDR device for scanning (if available)
         device = None
         if hw_devices:
-            device = mgr.open(driver=hw_devices[0].driver, serial=hw_devices[0].serial)
-            device.set_gain(cfg["devices"]["gain"])
-            logger.info("Scanning with: %s (%s)", hw_devices[0].label, hw_devices[0].driver)
-        else:
-            logger.info("No SoapySDR device found — running in gqrx-only mode (no scanning)")
+            try:
+                device = mgr.open(driver=hw_devices[0].driver, serial=hw_devices[0].serial)
+                # Test that we can actually use the device (USB interface may be busy)
+                device.start_stream()
+                test_buf = device.read_samples(1024)
+                device.stop_stream()
+                if test_buf is None:
+                    raise RuntimeError("Device opened but cannot read samples (USB busy?)")
+                device.set_gain(cfg["devices"]["gain"])
+                logger.info("Scanning with: %s (%s)", hw_devices[0].label, hw_devices[0].driver)
+            except Exception as e:
+                logger.warning("Cannot use SDR device: %s — falling back to gqrx-only mode", e)
+                try:
+                    device.close()
+                except Exception:
+                    pass
+                device = None
+        if device is None:
+            logger.info("No usable SoapySDR device — running in gqrx-only mode (no scanning)")
 
         # Open gqrx as tuner/player if available
         gqrx_device = None
