@@ -179,3 +179,38 @@ def test_rds_pipeline_reset():
     pipeline.process(np.zeros(50_000, dtype=np.complex64))
     pipeline.reset()
     assert pipeline._bit_buffer == []
+
+
+# ── Task 7 — rds_callback parameter in sweep_once ────────────────────────
+
+@pytest.mark.asyncio
+async def test_sweep_once_rds_callback():
+    """sweep_once should accept rds_callback and call it for FM frequencies."""
+    from signaldeck.engine.scanner import FrequencyScanner, ScanRange
+
+    class FakeDevice:
+        def set_sample_rate(self, r): pass
+        def start_stream(self): pass
+        def stop_stream(self): pass
+        def tune(self, f): self._freq = f
+        def read_samples(self, n):
+            rng = np.random.default_rng(42)
+            return (rng.standard_normal(n) + 1j * rng.standard_normal(n)).astype(np.complex64) * 0.01
+
+    callback_data = []
+
+    async def on_rds(freq_hz, iq_samples):
+        callback_data.append((freq_hz, len(iq_samples)))
+
+    scanner = FrequencyScanner(
+        device=FakeDevice(),
+        scan_ranges=[ScanRange(start_hz=88e6, end_hz=89e6, step_hz=200_000)],
+        fft_size=1024,
+        squelch_offset_db=100,
+    )
+
+    await scanner.sweep_once(rds_callback=on_rds, rds_sample_count=8192)
+    assert len(callback_data) > 0
+    for freq, n_samples in callback_data:
+        assert 88e6 <= freq < 89e6
+        assert n_samples == 8192

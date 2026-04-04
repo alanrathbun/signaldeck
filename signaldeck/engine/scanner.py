@@ -7,6 +7,9 @@ from numpy.typing import NDArray
 
 logger = logging.getLogger(__name__)
 
+FM_BROADCAST_LOW = 87_500_000   # Hz
+FM_BROADCAST_HIGH = 108_000_000 # Hz
+
 
 @dataclass
 class ScanRange:
@@ -121,7 +124,8 @@ class FrequencyScanner:
         self._dwell_time = dwell_time_s
         self._running = False
 
-    async def sweep_once(self, fft_callback=None) -> list[DetectedSignal]:
+    async def sweep_once(self, fft_callback=None, rds_callback=None,
+                         rds_sample_count: int = 0) -> list[DetectedSignal]:
         all_signals: list[DetectedSignal] = []
         self._device.set_sample_rate(self._sample_rate)
         self._device.start_stream()
@@ -152,6 +156,12 @@ class FrequencyScanner:
                         squelch_db=squelch,
                     )
                     all_signals.extend(signals)
+                    # Read extra IQ for RDS decoding on FM broadcast frequencies
+                    if (rds_callback and rds_sample_count > 0
+                            and FM_BROADCAST_LOW <= freq <= FM_BROADCAST_HIGH):
+                        rds_iq = self._device.read_samples(rds_sample_count)
+                        if rds_iq is not None and len(rds_iq) >= rds_sample_count:
+                            await rds_callback(freq, rds_iq)
                     if signals:
                         logger.info(
                             "Found %d signal(s) near %.3f MHz",
