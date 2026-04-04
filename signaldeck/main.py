@@ -143,6 +143,16 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
         hw_devices = [d for d in available if d.driver not in ("audio", "gqrx")]
         gqrx_devices = [d for d in available if d.driver == "gqrx"]
 
+        # Store discovered devices in config so the settings API can list them
+        cfg.setdefault("devices", {})["discovered"] = [
+            {"label": d.label, "driver": d.driver, "serial": d.serial}
+            for d in hw_devices
+        ]
+        cfg["devices"]["gqrx_instances"] = [
+            {"host": d.serial.split(":")[0], "port": int(d.serial.split(":")[1])}
+            for d in gqrx_devices
+        ]
+
         if not hw_devices and not gqrx_devices:
             logger.error("No devices found. Connect an SDR or start gqrx with remote control enabled.")
             if web_task:
@@ -185,11 +195,21 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                     try:
                         from signaldeck.api.routes.scanner import _scanner_state
                         _scanner_state["backend"] = "both" if device else "gqrx"
+                        _scanner_state["active_devices"] = (1 if device else 0) + 1
                     except ImportError:
                         pass
             except Exception as e:
                 logger.warning("Could not connect to gqrx: %s", e)
                 gqrx_device = None
+
+        # Set active_devices for SDR-only mode (no gqrx branch above)
+        if device and not gqrx_device and not headless:
+            try:
+                from signaldeck.api.routes.scanner import _scanner_state
+                _scanner_state["backend"] = "soapysdr"
+                _scanner_state["active_devices"] = 1
+            except ImportError:
+                pass
 
         # Build scan ranges and scanner (only if we have an SDR device)
         scanner = None
