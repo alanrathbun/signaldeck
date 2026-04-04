@@ -200,6 +200,7 @@
                   Modulation <span x-text="liveSortIcon('modulation')"></span></th>
                 <th x-show="liveVisibleCols.includes('protocol')" @click="sortLive('protocol')" class="sortable-th">
                   Protocol <span x-text="liveSortIcon('protocol')"></span></th>
+                <th x-show="liveVisibleCols.includes('rds')">RDS</th>
                 <th x-show="liveVisibleCols.includes('hits')">Hits</th>
                 <th x-show="liveVisibleCols.includes('last_seen')">Last Seen</th>
                 <th x-show="liveVisibleCols.includes('first_seen')" @click="sortLive('first_seen')" class="sortable-th">
@@ -228,6 +229,15 @@
                   </td>
                   <td x-show="liveVisibleCols.includes('modulation')"><span class="badge" :class="modBadge(sig.modulation)" x-text="sig.modulation || '--'"></span></td>
                   <td x-show="liveVisibleCols.includes('protocol')" x-text="sig.protocol || '--'"></td>
+                  <td x-show="liveVisibleCols.includes('rds')">
+                    <template x-if="sig.rds && sig.rds.ps_name">
+                      <span>
+                        <span class="badge badge-blue" x-text="sig.rds.ps_name"></span>
+                        <span x-show="sig.rds.radio_text" style="font-size:11px;color:#8b949e;margin-left:4px" x-text="sig.rds.radio_text"></span>
+                      </span>
+                    </template>
+                    <span x-show="!sig.rds || !sig.rds.ps_name">--</span>
+                  </td>
                   <td x-show="liveVisibleCols.includes('hits')" x-text="sig._hits || 1"></td>
                   <td x-show="liveVisibleCols.includes('last_seen')" x-text="sig._updated ? new Date(sig._updated).toLocaleTimeString() : '--'"></td>
                   <td x-show="liveVisibleCols.includes('first_seen')" x-text="sig.first_seen ? formatTime(sig.first_seen) : '--'"></td>
@@ -556,7 +566,27 @@
         <div class="card">
           <div class="card-header">
             <h3>Scan Ranges</h3>
-            <button class="btn btn-small btn-primary" @click="addScanRange()">+ Add Range</button>
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-small btn-primary" @click="addScanRange()">+ Custom</button>
+              <button class="btn btn-small" @click="showDefaultRanges = !showDefaultRanges"
+                      :style="showDefaultRanges ? 'background:#1f6feb;color:#fff' : ''">
+                + Preset
+              </button>
+            </div>
+          </div>
+          <!-- Default range presets -->
+          <div class="settings-list" x-show="showDefaultRanges" x-transition>
+            <div style="padding:8px 12px;display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+              <template x-for="preset in defaultScanRanges" :key="preset.label">
+                <button class="btn btn-small"
+                        :style="editSettings.scan_ranges.some(r => r.start_mhz === preset.start_mhz && r.end_mhz === preset.end_mhz)
+                          ? 'opacity:0.4;cursor:default' : ''"
+                        @click="addDefaultRange(preset)"
+                        x-text="`${preset.label} (${preset.start_mhz}–${preset.end_mhz})`">
+                </button>
+              </template>
+              <button class="btn btn-small btn-primary" @click="addAllDefaults()" style="margin-left:auto">Add All</button>
+            </div>
           </div>
           <div class="settings-list">
             <template x-for="(range, i) in editSettings.scan_ranges" :key="i">
@@ -573,7 +603,7 @@
               </div>
             </template>
             <div class="setting-row" x-show="editSettings.scan_ranges.length === 0">
-              <span class="setting-label">No ranges configured. Click "+ Add Range" above.</span>
+              <span class="setting-label">No ranges configured. Add a preset or custom range above.</span>
             </div>
           </div>
         </div>

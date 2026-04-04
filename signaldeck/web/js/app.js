@@ -33,13 +33,14 @@ function dashboard() {
     liveSortAsc: false,
     showColumnPicker: false,
     liveVisibleCols: JSON.parse(localStorage.getItem('signaldeck_live_cols') || 'null')
-      || ['frequency', 'power', 'modulation', 'protocol', 'hits', 'last_seen'],
+      || ['frequency', 'power', 'modulation', 'protocol', 'rds', 'hits', 'last_seen'],
     allLiveColumns: [
       { key: 'frequency', label: 'Frequency' },
       { key: 'bandwidth', label: 'Bandwidth' },
       { key: 'power', label: 'Power' },
       { key: 'modulation', label: 'Modulation' },
       { key: 'protocol', label: 'Protocol' },
+      { key: 'rds', label: 'RDS' },
       { key: 'hits', label: 'Hits' },
       { key: 'last_seen', label: 'Last Seen' },
       { key: 'first_seen', label: 'First Seen' },
@@ -86,6 +87,24 @@ function dashboard() {
       scanner_device: 'none',
       tuner_device: 'none',
     },
+
+    // --- Default scan range presets ---
+    defaultScanRanges: [
+      { label: 'Broadcast FM', start_mhz: 88, end_mhz: 108 },
+      { label: 'Airband', start_mhz: 118, end_mhz: 137 },
+      { label: 'VHF Low', start_mhz: 25, end_mhz: 54 },
+      { label: 'VHF High', start_mhz: 134, end_mhz: 174 },
+      { label: 'UHF', start_mhz: 400, end_mhz: 512 },
+      { label: 'ISM 433', start_mhz: 430, end_mhz: 440 },
+      { label: 'ISM 915', start_mhz: 902, end_mhz: 928 },
+      { label: 'Marine VHF', start_mhz: 156, end_mhz: 163 },
+      { label: 'Weather (NOAA)', start_mhz: 162.4, end_mhz: 162.55 },
+      { label: 'FRS/GMRS', start_mhz: 462, end_mhz: 467.7125 },
+      { label: 'MURS', start_mhz: 151.82, end_mhz: 154.6 },
+      { label: 'ADS-B (1090)', start_mhz: 1088, end_mhz: 1092 },
+      { label: 'GPS L1', start_mhz: 1574, end_mhz: 1577 },
+    ],
+    showDefaultRanges: false,
 
     // --- Map ---
     signalMap: null,
@@ -265,7 +284,11 @@ function dashboard() {
             try {
               const msg = JSON.parse(event.data);
               if (msg.type === 'fft' && msg.data) {
-                window.dispatchEvent(new CustomEvent('fft', { detail: { data: new Float32Array(msg.data) } }));
+                window.dispatchEvent(new CustomEvent('fft', { detail: {
+                  data: new Float32Array(msg.data),
+                  freqStart: msg.freq_start,
+                  freqEnd: msg.freq_end,
+                } }));
               }
             } catch (e) {
               // Ignore parse errors
@@ -287,9 +310,9 @@ function dashboard() {
         const idx = this.liveSignals.findIndex(s => s.frequency === sig.frequency);
         if (idx >= 0) {
           const prev = this.liveSignals[idx];
-          this.liveSignals[idx] = { ...prev, ...sig, _updated: Date.now(), _hits: (prev._hits || 1) + 1 };
+          this.liveSignals[idx] = { ...prev, ...sig, _updated: Date.now(), _hits: (prev._hits || 1) + 1, rds: sig.rds || prev.rds || null };
         } else {
-          this.liveSignals.push({ ...sig, _updated: Date.now(), _hits: 1 });
+          this.liveSignals.push({ ...sig, _updated: Date.now(), _hits: 1, rds: sig.rds || null });
         }
         // Remove stale signals (older than 60 seconds)
         const cutoff = Date.now() - 60000;
@@ -470,6 +493,31 @@ function dashboard() {
 
     addScanRange() {
       this.editSettings.scan_ranges.push({ label: '', start_mhz: 0, end_mhz: 0 });
+    },
+
+    addDefaultRange(preset) {
+      const exists = this.editSettings.scan_ranges.some(r =>
+        r.start_mhz === preset.start_mhz && r.end_mhz === preset.end_mhz
+      );
+      if (!exists) {
+        this.editSettings.scan_ranges.push({ ...preset });
+      } else {
+        this.showToast(`${preset.label} range already added`, 'warning');
+      }
+    },
+
+    addAllDefaults() {
+      let added = 0;
+      this.defaultScanRanges.forEach(preset => {
+        const exists = this.editSettings.scan_ranges.some(r =>
+          r.start_mhz === preset.start_mhz && r.end_mhz === preset.end_mhz
+        );
+        if (!exists) {
+          this.editSettings.scan_ranges.push({ ...preset });
+          added++;
+        }
+      });
+      this.showToast(added ? `Added ${added} range(s)` : 'All defaults already present', added ? 'success' : 'warning');
     },
 
     removeScanRange(index) {
@@ -729,6 +777,7 @@ function dashboard() {
           decoder: activity.decoder || null,
           activity_type: activity.type || null,
           activity_summary: activity.summary || null,
+          rds: sig.rds || enrich.rds || null,
         };
       });
     },
