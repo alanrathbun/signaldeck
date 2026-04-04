@@ -1,5 +1,8 @@
+from pathlib import Path
+
 from fastapi import APIRouter, Query
-from signaldeck.api.server import get_db
+
+from signaldeck.api.server import get_config, get_db
 
 router = APIRouter()
 
@@ -96,3 +99,50 @@ async def list_activity(limit: int = Query(default=50, ge=1, le=1000)):
             "audio_path": e.audio_path,
         })
     return results
+
+
+@router.delete("/data/signals")
+async def clear_signals():
+    db = get_db()
+    await db.clear_signals()
+    return {"status": "cleared", "table": "signals"}
+
+
+@router.delete("/data/activity")
+async def clear_activity():
+    db = get_db()
+    await db.clear_activity()
+    return {"status": "cleared", "table": "activity_log"}
+
+
+@router.delete("/data/bookmarks")
+async def clear_bookmarks():
+    db = get_db()
+    await db.clear_bookmarks()
+    return {"status": "cleared", "table": "bookmarks"}
+
+
+@router.delete("/data/recordings")
+async def clear_recordings():
+    db = get_db()
+    await db.clear_recordings()
+    config = get_config()
+    rec_dir = Path(config.get("audio", {}).get("recording_dir", "data/recordings"))
+    deleted_files = 0
+    if rec_dir.exists():
+        for f in rec_dir.glob("*.wav"):
+            f.unlink()
+            deleted_files += 1
+    return {"status": "cleared", "table": "recordings", "files_deleted": deleted_files}
+
+
+@router.delete("/data/all")
+async def clear_all_data():
+    db = get_db()
+    await db.clear_all()
+    config = get_config()
+    rec_dir = Path(config.get("audio", {}).get("recording_dir", "data/recordings"))
+    if rec_dir.exists():
+        for f in rec_dir.glob("*.wav"):
+            f.unlink()
+    return {"status": "cleared", "table": "all"}

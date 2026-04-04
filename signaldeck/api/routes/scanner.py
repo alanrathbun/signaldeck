@@ -5,7 +5,7 @@ import yaml
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from signaldeck.api.server import get_config
+from signaldeck.api.server import get_config, get_db
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +49,22 @@ async def scanner_start():
 async def scanner_stop():
     _scanner_state["status"] = "idle"
     return {"status": "idle", "message": "Scanner paused"}
+
+
+@router.get("/status")
+async def get_status():
+    """Return system status for the Status page."""
+    from signaldeck.api.websocket.live_signals import _clients as ws_clients
+    config = get_config()
+    db = get_db()
+    db_stats = await db.get_stats()
+    return {
+        "scanner": _scanner_state,
+        "db_stats": db_stats,
+        "ws_clients": len(ws_clients),
+        "session_log": config.get("_session_log_file"),
+        "start_time": config.get("_start_time"),
+    }
 
 
 @router.get("/settings")
