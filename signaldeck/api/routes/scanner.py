@@ -63,6 +63,9 @@ async def get_settings():
         "auth": {
             "enabled": config.get("auth", {}).get("enabled", False),
         },
+        "logging": {
+            "level": config.get("logging", {}).get("level", "INFO"),
+        },
     }
 
 
@@ -79,6 +82,14 @@ class SettingsUpdate(BaseModel):
     dwell_time_ms: float | None = None
     fft_size: int | None = None
     scan_ranges: list[ScanRangeUpdate] | None = None
+    # Audio settings
+    sample_rate: int | None = None
+    recording_dir: str | None = None
+    # Logging settings
+    log_level: str | None = None
+    # Device role settings
+    scanner_device: str | None = None
+    tuner_device: str | None = None
 
 
 @router.put("/settings")
@@ -118,6 +129,27 @@ async def update_settings(data: SettingsUpdate):
         ]
         changed.append(f"scan_ranges={len(data.scan_ranges)} ranges")
 
+    if data.sample_rate is not None:
+        config.setdefault("audio", {})["sample_rate"] = data.sample_rate
+        changed.append(f"sample_rate={data.sample_rate}")
+
+    if data.recording_dir is not None:
+        config.setdefault("audio", {})["recording_dir"] = data.recording_dir
+        changed.append(f"recording_dir={data.recording_dir}")
+
+    if data.log_level is not None:
+        config.setdefault("logging", {})["level"] = data.log_level
+        logging.getLogger().setLevel(getattr(logging, data.log_level.upper(), logging.INFO))
+        changed.append(f"log_level={data.log_level}")
+
+    if data.scanner_device is not None:
+        config.setdefault("devices", {})["scanner_device"] = data.scanner_device
+        changed.append(f"scanner_device={data.scanner_device}")
+
+    if data.tuner_device is not None:
+        config.setdefault("devices", {})["tuner_device"] = data.tuner_device
+        changed.append(f"tuner_device={data.tuner_device}")
+
     # Persist settings to user config file so they survive restarts
     if changed:
         _persist_user_config(config)
@@ -133,6 +165,8 @@ def _persist_user_config(config: dict) -> None:
     user_cfg = {
         "devices": {
             "gain": config.get("devices", {}).get("gain", 40),
+            "scanner_device": config.get("devices", {}).get("scanner_device"),
+            "tuner_device": config.get("devices", {}).get("tuner_device"),
         },
         "scanner": {
             "squelch_offset": config["scanner"].get("squelch_offset", 10),
@@ -141,7 +175,16 @@ def _persist_user_config(config: dict) -> None:
             "fft_size": config["scanner"].get("fft_size", 1024),
             "sweep_ranges": config["scanner"].get("sweep_ranges", []),
         },
+        "audio": {
+            "sample_rate": config.get("audio", {}).get("sample_rate", 48000),
+            "recording_dir": config.get("audio", {}).get("recording_dir", "data/recordings"),
+        },
+        "logging": {
+            "level": config.get("logging", {}).get("level", "INFO"),
+        },
     }
+    # Remove None values from devices
+    user_cfg["devices"] = {k: v for k, v in user_cfg["devices"].items() if v is not None}
     try:
         _USER_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(_USER_CONFIG_PATH, "w") as f:
