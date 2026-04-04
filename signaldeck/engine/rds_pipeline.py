@@ -122,3 +122,73 @@ def extract_rds_subcarrier(
     output = demod[::decimation]
 
     return output.astype(np.float32)
+
+
+# ---------------------------------------------------------------------------
+# BMC bit recovery + differential decode
+# ---------------------------------------------------------------------------
+
+def recover_bits(
+    signal: NDArray[np.float32],
+    samples_per_bit: int = 8,
+) -> list[int]:
+    """Zero-crossing based clock recovery for biphase-coded RDS signal.
+
+    In biphase/Manchester coding every bit boundary has a transition.
+    A '1' bit additionally has a mid-bit transition (~half-bit spacing),
+    while a '0' bit has no mid-bit transition (~full-bit spacing to next
+    boundary).
+
+    Returns a list of raw BMC bits (0 or 1).
+    """
+    if len(signal) < 2:
+        return []
+
+    hard = np.sign(signal)
+    # Replace zeros to avoid ambiguity
+    for i in range(len(hard)):
+        if hard[i] == 0:
+            hard[i] = 1.0
+
+    # Find zero-crossing indices
+    crossings: list[int] = []
+    for i in range(1, len(hard)):
+        if hard[i] != hard[i - 1]:
+            crossings.append(i)
+
+    if len(crossings) < 2:
+        return []
+
+    threshold = 0.75 * samples_per_bit
+    bits: list[int] = []
+
+    # The first crossing is assumed to be a bit boundary.
+    # Walk through crossings classifying spacings.
+    i = 0
+    while i < len(crossings):
+        if i + 1 < len(crossings):
+            spacing = crossings[i + 1] - crossings[i]
+            if spacing < threshold:
+                # Short spacing -> mid-bit transition present -> bit is '1'.
+                bits.append(1)
+                i += 2
+            else:
+                # Long spacing -> next bit boundary, no mid-bit -> '0'.
+                bits.append(0)
+                i += 1
+        else:
+            # Last crossing with remaining signal -- assume '0' (no
+            # mid-bit transition visible).
+            remaining = len(signal) - crossings[i]
+            if remaining >= samples_per_bit // 2:
+                bits.append(0)
+            i += 1
+
+    return bits
+
+
+def bmc_decode(raw_bits: list[int]) -> list[int]:
+    """Differential decode: ``data[n] = raw[n] XOR raw[n-1]``."""
+    if len(raw_bits) < 2:
+        return []
+    return [raw_bits[i] ^ raw_bits[i - 1] for i in range(1, len(raw_bits))]

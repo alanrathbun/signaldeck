@@ -4,10 +4,13 @@ import numpy as np
 import pytest
 
 from signaldeck.engine.rds_pipeline import (
+    RDS_SAMPLES_PER_BIT,
     RDS_WORKING_RATE,
+    bmc_decode,
     design_rds_filters,
     extract_rds_subcarrier,
     fm_demodulate_baseband,
+    recover_bits,
 )
 
 
@@ -62,3 +65,41 @@ class TestExtractRdsSubcarrier:
         out = extract_rds_subcarrier(baseband, filters)
         assert isinstance(out, np.ndarray)
         assert len(out) > 0
+
+
+# ── Task 3 — BMC bit recovery + differential decode ───────────────────────
+
+class TestBmcDecode:
+    def test_bmc_decode_known_sequence(self) -> None:
+        assert bmc_decode([1, 0, 1, 1, 0]) == [1, 1, 0, 1]
+
+    def test_bmc_decode_empty(self) -> None:
+        assert bmc_decode([]) == []
+        assert bmc_decode([1]) == []
+
+
+class TestRecoverBits:
+    def test_recover_bits_from_clean_biphase(self) -> None:
+        """Construct a clean BMC waveform for known bits and verify recovery."""
+        known_bits = [1, 0, 1, 1, 0, 0, 1, 0]
+        spb = RDS_SAMPLES_PER_BIT  # 8
+
+        # Build BMC waveform: every bit boundary has a transition.
+        # '1' bits also have a mid-bit transition; '0' bits do not.
+        # We prepend a short preamble so the first crossing the
+        # algorithm sees is the first bit boundary.
+        level = 1.0
+        waveform: list[float] = [level] * spb  # preamble
+        for bit in known_bits:
+            # Bit boundary -- always flip
+            level = -level
+            if bit == 1:
+                waveform.extend([level] * (spb // 2))
+                level = -level
+                waveform.extend([level] * (spb // 2))
+            else:
+                waveform.extend([level] * spb)
+
+        signal = np.array(waveform, dtype=np.float32)
+        recovered = recover_bits(signal, samples_per_bit=spb)
+        assert recovered == known_bits
