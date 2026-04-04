@@ -119,10 +119,11 @@ def decode_rds_group(
 
 
 class RdsDecoder(DecoderPlugin):
-    """Decoder that extracts RDS metadata from FM broadcast audio."""
+    """Decoder that extracts RDS metadata from FM broadcast IQ samples."""
 
     def __init__(self) -> None:
         self._station_data: dict[float, dict] = {}
+        self._pipelines: dict[float, "RdsPipeline"] = {}
 
     # ------------------------------------------------------------------
     # DecoderPlugin interface
@@ -138,60 +139,87 @@ class RdsDecoder(DecoderPlugin):
 
     @property
     def input_type(self) -> str:
-        return "audio"
+        return "iq"
 
     def can_decode(self, signal: SignalInfo) -> float:
-        """Return a confidence score for whether this signal carries RDS.
-
-        Rules (highest specificity first):
-          - protocol_hint == "rds"          → 0.95 (explicit RDS hint)
-          - protocol_hint == "broadcast_fm" → 0.60 (FM broadcast likely has RDS)
-          - 87.5–108 MHz wideband FM        → 0.50 (could be broadcast FM)
-          - anything else                   → 0.0
-        """
         hint = signal.protocol_hint
         if hint == "rds":
             return 0.95
         if hint == "broadcast_fm":
             return 0.60
-
-        # Check for wideband FM in the broadcast band without a specific hint
         is_fm = signal.modulation.upper() == "FM"
         in_broadcast_band = 87.5e6 <= signal.frequency_hz <= 108e6
-        is_wideband = signal.bandwidth_hz >= 100_000  # ≥ 100 kHz
-
+        is_wideband = signal.bandwidth_hz >= 100_000
         if is_fm and in_broadcast_band and is_wideband:
             return 0.50
-
         return 0.0
 
     async def decode(
         self, signal: SignalInfo, data_source
     ) -> AsyncIterator[DecoderResult]:
-        """Placeholder decode — yields a monitoring-status result.
+        """Decode RDS from IQ samples (numpy complex64 array)."""
+        import numpy as np
+        from signaldeck.engine.rds_pipeline import RdsPipeline
 
-        A full implementation would demodulate the 57 kHz RDS subcarrier,
-        clock-recover the 1187.5 bps biphase-mark signal, and feed groups
-        to :func:`decode_rds_group`.
-        """
-        yield DecoderResult(
-            timestamp=datetime.now(timezone.utc),
-            frequency=signal.frequency_hz,
-            protocol="rds",
-            result_type="status",
-            content={
-                "status": "monitoring",
-                "message": "RDS subcarrier monitoring active (full decode not yet implemented)",
-                "frequency_mhz": round(signal.frequency_hz / 1e6, 3),
-            },
-            metadata={
-                "strength": signal.peak_power,
-                "bandwidth_hz": signal.bandwidth_hz,
-            },
-        )
+        freq = signal.frequency_hz
+
+        if freq not in self._pipelines:
+            self._pipelines[freq] = RdsPipeline(
+                input_sample_rate=signal.sample_rate
+            )
+
+        pipeline = self._pipelines[freq]
+
+        if not isinstance(data_source, np.ndarray) or len(data_source) < 1000:
+            return
+
+        groups = pipeline.process(data_source)
+
+        for block_a, block_b, block_c, block_d in groups:
+            group = self.process_group(freq, block_a, block_b, block_c, block_d)
+            if group is None:
+                continue
+
+            station = self._station_data.get(freq, {})
+            ps_name = "".join(station.get("ps_name", [])).strip()
+            radio_text = "".join(station.get("radio_text", [])).strip()
+
+            yield DecoderResult(
+                timestamp=datetime.now(timezone.utc),
+                frequency=freq,
+                protocol="rds",
+                result_type="rds_group",
+                content={
+                    **group,
+                    "ps_name": ps_name,
+                    "radio_text": radio_text,
+                },
+                metadata={
+                    "strength": signal.peak_power,
+                    "bandwidth_hz": signal.bandwidth_hz,
+                },
+            )
+
+    def reset_frequency(self, freq_hz: float) -> None:
+        """Reset RDS pipeline state for a frequency."""
+        if freq_hz in self._pipelines:
+            self._pipelines[freq_hz].reset()
+        if freq_hz in self._station_data:
+            del self._station_data[freq_hz]
+
+    def get_station_data(self, freq_hz: float) -> dict | None:
+        """Return accumulated station metadata for a frequency."""
+        station = self._station_data.get(freq_hz)
+        if station is None:
+            return None
+        return {
+            "pi_code": station.get("pi_code"),
+            "ps_name": "".join(station.get("ps_name", [])).strip(),
+            "radio_text": "".join(station.get("radio_text", [])).strip(),
+        }
 
     # ------------------------------------------------------------------
-    # Stateful group accumulation
+    # Stateful group accumulation (unchanged from original)
     # ------------------------------------------------------------------
 
     def process_group(
@@ -202,10 +230,6 @@ class RdsDecoder(DecoderPlugin):
         block_c: int,
         block_d: int,
     ) -> dict | None:
-        """Decode one RDS group and accumulate station metadata.
-
-        Returns the decoded group dict, or None for unsupported groups.
-        """
         group = decode_rds_group(block_a, block_b, block_c, block_d)
         if group is None:
             return None
