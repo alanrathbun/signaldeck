@@ -1,6 +1,7 @@
 import asyncio
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 
 import aiosqlite
 
@@ -302,3 +303,40 @@ class Database:
             )
             for row in rows
         ]
+
+    async def clear_signals(self) -> None:
+        async with self._lock:
+            await self._conn.execute("DELETE FROM signals")
+            await self._conn.commit()
+
+    async def clear_activity(self) -> None:
+        async with self._lock:
+            await self._conn.execute("DELETE FROM activity_log")
+            await self._conn.commit()
+
+    async def clear_bookmarks(self) -> None:
+        async with self._lock:
+            await self._conn.execute("DELETE FROM bookmarks")
+            await self._conn.commit()
+
+    async def clear_recordings(self) -> None:
+        async with self._lock:
+            await self._conn.execute("DELETE FROM recordings")
+            await self._conn.commit()
+
+    async def clear_all(self) -> None:
+        async with self._lock:
+            for table in ("signals", "activity_log", "bookmarks", "recordings",
+                          "decoder_results", "learned_patterns"):
+                await self._conn.execute(f"DELETE FROM {table}")
+            await self._conn.commit()
+
+    async def get_stats(self) -> dict:
+        counts = {}
+        for name, table in [("signals", "signals"), ("activity", "activity_log"),
+                            ("bookmarks", "bookmarks"), ("recordings", "recordings")]:
+            cursor = await self._conn.execute(f"SELECT COUNT(*) FROM {table}")
+            row = await cursor.fetchone()
+            counts[name] = row[0]
+        counts["db_size"] = Path(self._db_path).stat().st_size
+        return counts
