@@ -229,6 +229,9 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
 
         classifier = SignalClassifier()
 
+        from signaldeck.decoders.rds import RdsDecoder
+        rds_decoder = RdsDecoder()
+
         # WebSocket broadcast (only when dashboard is running)
         ws_broadcast = None
         fft_broadcast_fn = None
@@ -316,6 +319,42 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                 msg = msg_fn(center_freq_hz, sample_rate, power_db)
                 await bcast_fn(msg)
 
+        # RDS IQ callback — processes FM broadcast IQ for RDS decoding
+        async def on_rds(center_freq_hz, iq_samples):
+            """Decode RDS from raw IQ samples captured during scanning."""
+            signal_info = SignalInfo(
+                frequency_hz=center_freq_hz,
+                bandwidth_hz=200_000,
+                peak_power=-30.0,
+                modulation="FM",
+                sample_rate=2_000_000,
+                protocol_hint="broadcast_fm",
+            )
+            async for rds_result in rds_decoder.decode(signal_info, iq_samples):
+                content = rds_result.content
+                ps_name = content.get("ps_name", "")
+                radio_text = content.get("radio_text", "")
+                if ps_name:
+                    logger.info("RDS @ %.1f MHz: [%s] %s",
+                                center_freq_hz / 1e6, ps_name, radio_text)
+                # Broadcast RDS data via WebSocket
+                if ws_broadcast and ps_name:
+                    broadcast_fn, msg_fn = ws_broadcast
+                    msg = msg_fn(
+                        frequency_hz=center_freq_hz,
+                        bandwidth_hz=200_000,
+                        power=-30.0,
+                        modulation="FM",
+                        protocol="broadcast_fm",
+                    )
+                    msg["rds"] = {
+                        "ps_name": ps_name,
+                        "radio_text": radio_text,
+                        "pty_name": content.get("pty_name", ""),
+                        "pi_code": content.get("pi_code"),
+                    }
+                    await broadcast_fn(msg)
+
         # Track gqrx tuning state so we don't re-send the same frequency
         _gqrx_tuned_freq = None
 
@@ -360,7 +399,11 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                             continue
 
                     # SoapySDR handles scanning
-                    signals = await scanner.sweep_once(fft_callback=on_fft)
+                    signals = await scanner.sweep_once(
+                        fft_callback=on_fft,
+                        rds_callback=on_rds,
+                        rds_sample_count=131_072,
+                    )
                     if signals:
                         await on_signals(signals)
                 else:
