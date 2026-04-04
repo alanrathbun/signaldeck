@@ -214,3 +214,39 @@ async def test_sweep_once_rds_callback():
     for freq, n_samples in callback_data:
         assert 88e6 <= freq < 89e6
         assert n_samples == 8192
+
+
+# ── Task 8 — Database persistence for decoder results ────────────────────
+
+@pytest.mark.asyncio
+async def test_insert_and_get_decoder_result(tmp_path):
+    from signaldeck.storage.database import Database
+    from signaldeck.storage.models import Signal, ActivityEntry
+    from datetime import datetime, timezone
+
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    now = datetime.now(timezone.utc)
+    sig = Signal(frequency=98_500_000, bandwidth=200_000, modulation="FM",
+                 protocol="broadcast_fm", first_seen=now, last_seen=now,
+                 hit_count=1, avg_strength=-30.0, confidence=0.6)
+    signal_id = await db.upsert_signal(sig)
+
+    entry = ActivityEntry(signal_id=signal_id, timestamp=now, duration=0.05,
+                          strength=-30.0, decoder_used="rds",
+                          result_type="rds_group", summary="98.500 MHz [broadcast_fm]")
+    activity_id = await db.insert_activity(entry)
+
+    row_id = await db.insert_decoder_result(
+        activity_id=activity_id, decoder="rds", protocol="rds",
+        result_type="rds_group",
+        content={"ps_name": "WXYZ FM", "radio_text": "Now playing: Test Song"},
+    )
+    assert row_id > 0
+
+    rds = await db.get_rds_for_frequency(98_500_000)
+    assert rds is not None
+    assert rds["ps_name"] == "WXYZ FM"
+
+    await db.close()

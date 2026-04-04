@@ -340,3 +340,35 @@ class Database:
             counts[name] = row[0]
         counts["db_size"] = Path(self._db_path).stat().st_size
         return counts
+
+    async def insert_decoder_result(
+        self, activity_id: int, decoder: str, protocol: str,
+        result_type: str, content: dict,
+    ) -> int:
+        cursor = await self._conn.execute(
+            """INSERT INTO decoder_results
+               (activity_id, decoder, protocol, result_type, content, timestamp)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (activity_id, decoder, protocol, result_type,
+             json.dumps(content),
+             datetime.now(timezone.utc).isoformat()),
+        )
+        await self._conn.commit()
+        return cursor.lastrowid
+
+    async def get_rds_for_frequency(
+        self, frequency_hz: float, tolerance_hz: float = 5000,
+    ) -> dict | None:
+        cursor = await self._conn.execute(
+            """SELECT dr.content FROM decoder_results dr
+               JOIN activity_log al ON dr.activity_id = al.id
+               JOIN signals s ON al.signal_id = s.id
+               WHERE ABS(s.frequency - ?) <= ?
+                 AND dr.decoder = 'rds'
+               ORDER BY dr.timestamp DESC LIMIT 1""",
+            (frequency_hz, tolerance_hz),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return json.loads(row["content"])
