@@ -52,13 +52,18 @@ def cli() -> None:
 
 async def _stream_audio(device, frequency_hz: float, send_fn, audio_request_fn,
                         sample_rate: float = 2_000_000,
-                        chunk_duration_s: float = 0.1) -> None:
+                        chunk_duration_s: float = 0.1,
+                        fft_callback=None,
+                        rds_callback=None) -> None:
     """Tune to a frequency and continuously stream demodulated FM audio.
 
-    Keeps streaming until the audio request becomes inactive.
+    Also computes FFT for the waterfall display and runs RDS decoding
+    on the sustained IQ stream.  Keeps streaming until the audio request
+    becomes inactive.
     """
     import numpy as np
     from signaldeck.engine.audio_pipeline import fm_demodulate
+    from signaldeck.engine.scanner import compute_power_spectrum
 
     num_samples = int(sample_rate * chunk_duration_s)
     device.tune(frequency_hz)
@@ -76,6 +81,15 @@ async def _stream_audio(device, frequency_hz: float, send_fn, audio_request_fn,
             if samples is None or len(samples) < 1000:
                 await asyncio.sleep(0.01)
                 continue
+
+            # Compute FFT for waterfall (use first 1024 samples)
+            if fft_callback is not None and len(samples) >= 1024:
+                power_db = compute_power_spectrum(samples[:1024], fft_size=1024)
+                await fft_callback(frequency_hz, sample_rate, power_db)
+
+            # Run RDS on the full IQ chunk (FM broadcast band only)
+            if rds_callback is not None and 87_500_000 <= frequency_hz <= 108_000_000:
+                await rds_callback(frequency_hz, samples)
 
             # FM demodulate to 48 kHz audio
             audio = fm_demodulate(samples, sample_rate=sample_rate, audio_rate=48000)
@@ -394,9 +408,35 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                                         audio_req["frequency_hz"] / 1e6)
                             await _stream_audio(device, audio_req["frequency_hz"],
                                                 audio_stream_fn, audio_request_fn,
-                                                sample_rate=2_000_000)
+                                                sample_rate=2_000_000,
+                                                fft_callback=on_fft,
+                                                rds_callback=on_rds)
                             logger.info("Audio streaming ended, resuming scan")
                             continue
+
+                    # When gqrx is tuned, do a focused SDR dwell on that
+                    # frequency for waterfall + RDS before scanning
+                    if gqrx_device and _gqrx_tuned_freq and device:
+                        import numpy as np
+                        from signaldeck.engine.scanner import compute_power_spectrum
+                        try:
+                            device.set_sample_rate(2_000_000)
+                            device.start_stream()
+                            device.tune(_gqrx_tuned_freq)
+                            await asyncio.sleep(0.01)
+                            dwell_samples = device.read_samples(131_072)
+                            device.stop_stream()
+                            if dwell_samples is not None and len(dwell_samples) >= 1024:
+                                # Waterfall FFT
+                                power_db = compute_power_spectrum(
+                                    dwell_samples[:1024], fft_size=1024)
+                                await on_fft(_gqrx_tuned_freq, 2_000_000,
+                                             power_db)
+                                # RDS decode
+                                if 87_500_000 <= _gqrx_tuned_freq <= 108_000_000:
+                                    await on_rds(_gqrx_tuned_freq, dwell_samples)
+                        except Exception as e:
+                            logger.debug("Focused dwell failed: %s", e)
 
                     # SoapySDR handles scanning
                     signals = await scanner.sweep_once(
