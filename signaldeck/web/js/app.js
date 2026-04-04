@@ -102,6 +102,11 @@ function dashboard() {
     currentApiToken: null,
     changePass: { current: '', newPass: '', confirm: '' },
 
+    // --- Logs ---
+    logFiles: [],
+    currentLog: { name: '', content: '' },
+    logFilter: '',
+
     // --- Toasts ---
     toasts: [],
     toastCounter: 0,
@@ -190,6 +195,10 @@ function dashboard() {
       if (this.currentPage === 'status') {
         this.fetchStatusPage();
         this.fetchAnalytics();
+      }
+      if (this.currentPage === 'logs') {
+        this.fetchLogFiles();
+        this.fetchCurrentLog();
       }
       switch (this.currentPage) {
         case 'recordings': this.fetchRecordings(); break;
@@ -487,6 +496,44 @@ function dashboard() {
           }
         });
       }
+    },
+
+    async fetchLogFiles() {
+      try {
+        const data = await this.apiFetch('/api/logs');
+        if (data) this.logFiles = data;
+      } catch (e) { /* ignore */ }
+    },
+
+    async fetchCurrentLog() {
+      try {
+        const data = await this.apiFetch('/api/logs/current');
+        if (data) this.currentLog = data;
+      } catch (e) { /* ignore */ }
+    },
+
+    async selectLogFile(filename) {
+      try {
+        const data = await this.apiFetch(`/api/logs/${filename}`);
+        if (data) this.currentLog = data;
+      } catch (e) {
+        this.showToast('Failed to load log file', 'error');
+      }
+    },
+
+    get filteredLogLines() {
+      if (!this.currentLog.content) return [];
+      const lines = this.currentLog.content.split('\n');
+      if (!this.logFilter) return lines;
+      const levels = { 'ERROR': 3, 'WARNING': 2, 'INFO': 1 };
+      const minLevel = levels[this.logFilter] || 0;
+      return lines.filter(line => {
+        if (line.includes(' ERROR:')) return levels['ERROR'] >= minLevel;
+        if (line.includes(' WARNING:')) return levels['WARNING'] >= minLevel;
+        if (line.includes(' INFO:')) return levels['INFO'] >= minLevel;
+        if (line.includes(' DEBUG:')) return 0 >= minLevel;
+        return true;
+      });
     },
 
     async toggleAuth() {
