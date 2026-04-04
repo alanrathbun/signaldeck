@@ -159,3 +159,23 @@ class TestFindRdsGroups:
         assert find_rds_groups([]) == []
         assert find_rds_groups([0] * 103) == []
         assert find_rds_groups([0] * 200) == []
+
+
+# ── Task 5 — Stateful RdsPipeline class ──────────────────────────────────
+
+def test_rds_pipeline_process_returns_groups():
+    from signaldeck.engine.rds_pipeline import RdsPipeline
+    pipeline = RdsPipeline(input_sample_rate=2_000_000)
+    # Feed silence — should get no groups but no crash
+    iq = np.zeros(100_000, dtype=np.complex64)
+    groups = pipeline.process(iq)
+    assert isinstance(groups, list)
+    assert len(groups) == 0
+
+
+def test_rds_pipeline_reset():
+    from signaldeck.engine.rds_pipeline import RdsPipeline
+    pipeline = RdsPipeline(input_sample_rate=2_000_000)
+    pipeline.process(np.zeros(50_000, dtype=np.complex64))
+    pipeline.reset()
+    assert pipeline._bit_buffer == []

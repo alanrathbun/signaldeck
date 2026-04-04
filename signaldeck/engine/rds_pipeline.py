@@ -299,3 +299,63 @@ def find_rds_groups(
         i += 104  # advance past this group
 
     return groups
+
+
+# ---------------------------------------------------------------------------
+# Stateful pipeline
+# ---------------------------------------------------------------------------
+
+class RdsPipeline:
+    """Stateful pipeline that accumulates IQ chunks and emits decoded RDS groups.
+    Caches filter coefficients. Carries over the undecoded bit buffer across
+    calls so frame sync persists between short dwells on the same frequency.
+    """
+
+    def __init__(self, input_sample_rate: float = 2_000_000) -> None:
+        self._input_rate = input_sample_rate
+        self._filters = design_rds_filters()
+        self._bit_buffer: list[int] = []
+
+    def process(self, iq: NDArray[np.complex64]) -> list[tuple[int, int, int, int]]:
+        """Feed IQ samples, return any complete RDS groups decoded.
+        Call repeatedly with successive chunks; bit state carries over.
+        """
+        # If too few samples, skip
+        if len(iq) < 1000:
+            return []
+
+        # FM demodulate to 228 kHz baseband
+        baseband = fm_demodulate_baseband(iq, self._input_rate, RDS_WORKING_RATE)
+
+        # Extract RDS subcarrier and decimate to 9500 Hz
+        rds_signal = extract_rds_subcarrier(baseband, self._filters)
+
+        # Recover raw BMC bits
+        raw_bits = recover_bits(rds_signal, RDS_SAMPLES_PER_BIT)
+        if not raw_bits:
+            return []
+
+        # Differential decode
+        data_bits = bmc_decode(raw_bits)
+
+        # Append to carry-over buffer
+        self._bit_buffer.extend(data_bits)
+
+        # Cap buffer size to prevent unbounded growth (keep last 2000 bits)
+        if len(self._bit_buffer) > 2000:
+            self._bit_buffer = self._bit_buffer[-2000:]
+
+        # Find complete groups
+        groups = find_rds_groups(self._bit_buffer)
+
+        # Trim consumed bits
+        if groups:
+            consumed = len(self._bit_buffer) - 104
+            if consumed > 0:
+                self._bit_buffer = self._bit_buffer[consumed:]
+
+        return groups
+
+    def reset(self) -> None:
+        """Reset sync state. Call when changing frequency."""
+        self._bit_buffer = []
