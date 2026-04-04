@@ -72,6 +72,7 @@ function dashboard() {
     // --- Scanner Status / Settings ---
     scannerStatus: {},
     settings: {},
+    statusData: {},
     editSettings: {
       gain: 40,
       squelch_offset: 10,
@@ -111,7 +112,7 @@ function dashboard() {
     async init() {
       // Restore page from hash
       const hash = window.location.hash.replace('#', '');
-      if (hash && ['live', 'recordings', 'bookmarks', 'map', 'settings'].includes(hash)) {
+      if (hash && ['live', 'recordings', 'bookmarks', 'map', 'status', 'settings', 'logs'].includes(hash)) {
         this.currentPage = hash;
       }
 
@@ -171,13 +172,17 @@ function dashboard() {
         });
       }
 
-      // Draw charts on settings page
-      if (page === 'settings') {
+      // Draw charts on status page
+      if (page === 'status') {
         this.$nextTick(() => this.fetchAnalytics());
       }
     },
 
     fetchPageData() {
+      if (this.currentPage === 'status') {
+        this.fetchStatusPage();
+        this.fetchAnalytics();
+      }
       switch (this.currentPage) {
         case 'recordings': this.fetchRecordings(); break;
         case 'bookmarks': this.fetchBookmarks(); break;
@@ -439,6 +444,14 @@ function dashboard() {
 
     removeScanRange(index) {
       this.editSettings.scan_ranges.splice(index, 1);
+    },
+
+    async fetchStatusPage() {
+      try {
+        const data = await this.apiFetch('/api/status');
+        if (data) this.statusData = data;
+      } catch (e) { /* status page is non-critical */ }
+      await this.fetchStatus();
     },
 
     async fetchAnalytics() {
