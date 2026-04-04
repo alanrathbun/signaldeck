@@ -830,7 +830,7 @@ function dashboard() {
     },
 
     isGqrxBackend() {
-      return this.scannerStatus && this.scannerStatus.backend === 'gqrx';
+      return this.scannerStatus && (this.scannerStatus.backend === 'gqrx' || this.scannerStatus.backend === 'both');
     },
 
     startAudio() {

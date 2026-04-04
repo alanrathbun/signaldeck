@@ -184,7 +184,7 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                 if not headless:
                     try:
                         from signaldeck.api.routes.scanner import _scanner_state
-                        _scanner_state["backend"] = "gqrx"
+                        _scanner_state["backend"] = "both" if device else "gqrx"
                     except ImportError:
                         pass
             except Exception as e:
