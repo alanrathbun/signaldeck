@@ -17,6 +17,16 @@ RDS_OUTPUT_RATE = 9_500           # Hz
 FM_BROADCAST_LOW = 87_500_000     # Hz
 FM_BROADCAST_HIGH = 108_000_000   # Hz
 
+# BCH parity constants
+RDS_BCH_POLY = 0b10110111001  # x^10 + x^8 + x^7 + x^5 + x^4 + x^3 + 1
+RDS_OFFSETS = {
+    "A":  0b0011111100,   # 0x0FC
+    "B":  0b0110011000,   # 0x198
+    "C":  0b0101101000,   # 0x168
+    "C'": 0b1101010000,   # 0x350
+    "D":  0b0110110100,   # 0x1B4
+}
+
 
 # ---------------------------------------------------------------------------
 # Filter design + FM baseband demodulation
@@ -192,3 +202,100 @@ def bmc_decode(raw_bits: list[int]) -> list[int]:
     if len(raw_bits) < 2:
         return []
     return [raw_bits[i] ^ raw_bits[i - 1] for i in range(1, len(raw_bits))]
+
+
+# ---------------------------------------------------------------------------
+# Frame sync + BCH parity
+# ---------------------------------------------------------------------------
+
+def compute_syndrome(block_bits: list[int]) -> int:
+    """Compute BCH syndrome for a 26-bit RDS block.
+
+    Performs polynomial division of the 26-bit block by :data:`RDS_BCH_POLY`
+    (degree 10).  The remainder is the 10-bit syndrome.
+
+    Returns a 10-bit integer.
+    """
+    # Pack bits into a single integer
+    block = 0
+    for b in block_bits:
+        block = (block << 1) | (b & 1)
+
+    # Polynomial division -- poly is degree 10 (11 bits)
+    poly = RDS_BCH_POLY
+    for i in range(25, 9, -1):
+        if (block >> i) & 1:
+            block ^= poly << (i - 10)
+
+    return block & 0x3FF
+
+
+def _bits_to_uint16(bits: list[int]) -> int:
+    """Convert the first 16 bits of *bits* to an unsigned 16-bit integer."""
+    value = 0
+    for b in bits[:16]:
+        value = (value << 1) | (b & 1)
+    return value
+
+
+def find_rds_groups(
+    data_bits: list[int],
+) -> list[tuple[int, int, int, int]]:
+    """Sliding-window frame sync to extract RDS groups.
+
+    Each group consists of four 26-bit blocks (A, B, C/C', D).  The
+    function checks BCH syndromes against the known offset words and
+    returns a list of ``(block_a, block_b, block_c, block_d)`` tuples
+    where each element is a 16-bit data word.
+    """
+    groups: list[tuple[int, int, int, int]] = []
+    n = len(data_bits)
+    if n < 104:
+        return groups
+
+    offset_a = RDS_OFFSETS["A"]
+    offset_b = RDS_OFFSETS["B"]
+    offset_c = RDS_OFFSETS["C"]
+    offset_cp = RDS_OFFSETS["C'"]
+    offset_d = RDS_OFFSETS["D"]
+
+    i = 0
+    while i <= n - 104:
+        block_a_bits = data_bits[i : i + 26]
+        syn_a = compute_syndrome(block_a_bits)
+        if syn_a != offset_a:
+            i += 1
+            continue
+
+        # Block A matched -- check B, C/C', D
+        block_b_bits = data_bits[i + 26 : i + 52]
+        syn_b = compute_syndrome(block_b_bits)
+        if syn_b != offset_b:
+            i += 1
+            continue
+
+        block_c_bits = data_bits[i + 52 : i + 78]
+        syn_c = compute_syndrome(block_c_bits)
+        c_ok = syn_c == offset_c or syn_c == offset_cp
+        if not c_ok:
+            i += 1
+            continue
+
+        block_d_bits = data_bits[i + 78 : i + 104]
+        syn_d = compute_syndrome(block_d_bits)
+        if syn_d != offset_d:
+            i += 1
+            continue
+
+        # All four blocks valid
+        a = _bits_to_uint16(block_a_bits)
+        b = _bits_to_uint16(block_b_bits)
+        c = _bits_to_uint16(block_c_bits)
+        d = _bits_to_uint16(block_d_bits)
+        groups.append((a, b, c, d))
+        logger.debug(
+            "RDS group: A=0x%04X B=0x%04X C=0x%04X D=0x%04X", a, b, c, d,
+        )
+        i += 104  # advance past this group
+
+    return groups

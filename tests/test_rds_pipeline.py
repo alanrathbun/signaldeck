@@ -4,11 +4,16 @@ import numpy as np
 import pytest
 
 from signaldeck.engine.rds_pipeline import (
+    RDS_BCH_POLY,
+    RDS_OFFSETS,
     RDS_SAMPLES_PER_BIT,
     RDS_WORKING_RATE,
+    _bits_to_uint16,
     bmc_decode,
+    compute_syndrome,
     design_rds_filters,
     extract_rds_subcarrier,
+    find_rds_groups,
     fm_demodulate_baseband,
     recover_bits,
 )
@@ -103,3 +108,54 @@ class TestRecoverBits:
         signal = np.array(waveform, dtype=np.float32)
         recovered = recover_bits(signal, samples_per_bit=spb)
         assert recovered == known_bits
+
+
+# ── helpers ────────────────────────────────────────────────────────────────
+
+def encode_block(data_16: int, offset: int) -> list[int]:
+    """Encode a 16-bit word with BCH parity and offset into 26-bit block."""
+    msg = data_16 << 10
+    poly = 0b10110111001
+    for i in range(15, -1, -1):
+        if (msg >> (i + 10)) & 1:
+            msg ^= poly << i
+    parity = (msg & 0x3FF) ^ offset
+    full = (data_16 << 10) | parity
+    return [(full >> (25 - b)) & 1 for b in range(26)]
+
+
+# ── Task 4 — Frame sync + BCH parity ─────────────────────────────────────
+
+class TestComputeSyndrome:
+    def test_encode_and_check_block(self) -> None:
+        """Encode blocks with BCH + offset and verify syndrome matches."""
+        for name, offset in RDS_OFFSETS.items():
+            data = 0xABCD
+            block_bits = encode_block(data, offset)
+            assert len(block_bits) == 26
+            syn = compute_syndrome(block_bits)
+            assert syn == offset, f"Syndrome mismatch for offset {name}"
+
+
+class TestFindRdsGroups:
+    def test_find_rds_groups_synthetic(self) -> None:
+        """Build a complete valid RDS group and verify extraction."""
+        a_data = 0x1234
+        b_data = 0x5678
+        c_data = 0x9ABC
+        d_data = 0xDEF0
+
+        bits: list[int] = []
+        bits.extend(encode_block(a_data, RDS_OFFSETS["A"]))
+        bits.extend(encode_block(b_data, RDS_OFFSETS["B"]))
+        bits.extend(encode_block(c_data, RDS_OFFSETS["C"]))
+        bits.extend(encode_block(d_data, RDS_OFFSETS["D"]))
+
+        groups = find_rds_groups(bits)
+        assert len(groups) == 1
+        assert groups[0] == (a_data, b_data, c_data, d_data)
+
+    def test_find_rds_groups_empty(self) -> None:
+        assert find_rds_groups([]) == []
+        assert find_rds_groups([0] * 103) == []
+        assert find_rds_groups([0] * 200) == []
