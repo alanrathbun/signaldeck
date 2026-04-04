@@ -140,7 +140,7 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
             from signaldeck.api.server import create_app
             import uvicorn
             app = create_app(cfg, shared_db=db)
-            uvi_config = uvicorn.Config(app, host=host, port=port, log_level="info")
+            uvi_config = uvicorn.Config(app, host=host, port=port, log_level="warning")
             server = uvicorn.Server(uvi_config)
             web_task = asyncio.create_task(server.serve())
             logger.info("Web dashboard at http://%s:%d", host, port)
@@ -349,8 +349,8 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                 ps_name = content.get("ps_name", "")
                 radio_text = content.get("radio_text", "")
                 if ps_name:
-                    logger.info("RDS @ %.1f MHz: [%s] %s",
-                                center_freq_hz / 1e6, ps_name, radio_text)
+                    logger.debug("RDS @ %.1f MHz: [%s] %s",
+                                 center_freq_hz / 1e6, ps_name, radio_text)
                 # Broadcast RDS data via WebSocket
                 if ws_broadcast and ps_name:
                     broadcast_fn, msg_fn = ws_broadcast
@@ -383,11 +383,11 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                 if freq_hz != _gqrx_tuned_freq:
                     await gqrx_device.tune(freq_hz)
                     _gqrx_tuned_freq = freq_hz
-                    logger.info("gqrx: tuned to %.3f MHz", freq_hz / 1e6)
+                    logger.debug("gqrx: tuned to %.3f MHz", freq_hz / 1e6)
             else:
                 if _gqrx_tuned_freq is not None:
                     _gqrx_tuned_freq = None
-                    logger.info("gqrx: idle")
+                    logger.debug("gqrx: idle")
 
         if scanner:
             logger.info("Starting sweep across %d range(s)...", len(ranges))

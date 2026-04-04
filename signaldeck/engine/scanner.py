@@ -163,7 +163,7 @@ class FrequencyScanner:
                         if rds_iq is not None and len(rds_iq) >= rds_sample_count:
                             await rds_callback(freq, rds_iq)
                     if signals:
-                        logger.info(
+                        logger.debug(
                             "Found %d signal(s) near %.3f MHz",
                             len(signals), freq / 1e6,
                         )

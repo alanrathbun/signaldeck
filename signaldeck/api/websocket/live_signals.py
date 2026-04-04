@@ -57,7 +57,7 @@ async def broadcast(message: dict):
 async def ws_signals(websocket: WebSocket):
     await websocket.accept()
     _clients.add(websocket)
-    logger.info("WebSocket client connected (%d total)", len(_clients))
+    logger.debug("WebSocket client connected (%d total)", len(_clients))
     try:
         while True:
             data = await websocket.receive_json()
@@ -67,4 +67,4 @@ async def ws_signals(websocket: WebSocket):
         pass
     finally:
         _clients.discard(websocket)
-        logger.info("WebSocket client disconnected (%d remaining)", len(_clients))
+        logger.debug("WebSocket client disconnected (%d remaining)", len(_clients))

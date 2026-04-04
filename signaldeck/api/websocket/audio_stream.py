@@ -31,7 +31,7 @@ async def ws_audio(websocket: WebSocket):
     global _audio_clients
     await websocket.accept()
     _audio_clients[websocket] = None
-    logger.info("Audio WebSocket client connected")
+    logger.debug("Audio WebSocket client connected")
 
     try:
         while True:
@@ -43,7 +43,7 @@ async def ws_audio(websocket: WebSocket):
                 _audio_clients[websocket] = freq
                 _audio_request["frequency_hz"] = freq
                 _audio_request["active"] = True
-                logger.info("Audio subscribe: %.3f MHz", freq / 1e6)
+                logger.debug("Audio subscribe: %.3f MHz", freq / 1e6)
                 await websocket.send_json({"type": "subscribed", "frequency_hz": freq})
             elif data.get("type") == "unsubscribe":
                 _audio_clients[websocket] = None
@@ -59,4 +59,4 @@ async def ws_audio(websocket: WebSocket):
         if not any(f is not None for f in _audio_clients.values()):
             _audio_request["frequency_hz"] = None
             _audio_request["active"] = False
-        logger.info("Audio WebSocket client disconnected")
+        logger.debug("Audio WebSocket client disconnected")
