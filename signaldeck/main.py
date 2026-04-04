@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
 import click
@@ -8,12 +9,38 @@ from signaldeck import __version__
 from signaldeck.config import load_config
 
 
-def setup_logging(level: str) -> None:
-    logging.basicConfig(
-        level=getattr(logging, level.upper(), logging.INFO),
-        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-        datefmt="%H:%M:%S",
-    )
+def setup_logging(level: str, log_dir: str = "data/logs") -> Path:
+    """Configure dual-handler logging: file at INFO+, console at WARNING+.
+
+    Returns the path to the current session log file.
+    """
+    from datetime import datetime as _dt
+
+    log_path = Path(log_dir)
+    log_path.mkdir(parents=True, exist_ok=True)
+
+    timestamp = _dt.now().strftime("%Y-%m-%dT%H-%M-%S")
+    log_file = log_path / f"signaldeck-{timestamp}.log"
+
+    fmt = "%(asctime)s [%(name)s] %(levelname)s: %(message)s"
+    datefmt = "%H:%M:%S"
+
+    root = logging.getLogger()
+    root.setLevel(getattr(logging, level.upper(), logging.INFO))
+
+    # File handler — full detail at configured level
+    fh = logging.FileHandler(log_file)
+    fh.setLevel(getattr(logging, level.upper(), logging.INFO))
+    fh.setFormatter(logging.Formatter(fmt, datefmt=datefmt))
+    root.addHandler(fh)
+
+    # Console handler — only warnings and above
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.WARNING)
+    ch.setFormatter(logging.Formatter(fmt, datefmt=datefmt))
+    root.addHandler(ch)
+
+    return log_file
 
 
 @click.group()
@@ -71,7 +98,10 @@ async def _stream_audio(device, frequency_hz: float, send_fn, audio_request_fn,
 def start(config_path: str | None, headless: bool, host: str, port: int) -> None:
     """Start the SignalDeck engine."""
     cfg = load_config(config_path)
-    setup_logging(cfg["logging"]["level"])
+    log_dir = cfg["logging"].get("log_dir", "data/logs")
+    log_file = setup_logging(cfg["logging"]["level"], log_dir)
+    cfg["_session_log_file"] = str(log_file)
+    cfg["_start_time"] = datetime.now(timezone.utc).isoformat()
     logger = logging.getLogger("signaldeck")
 
     logger.info("SignalDeck v%s starting...", __version__)
@@ -158,7 +188,6 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                 dwell_time_s=cfg["scanner"]["dwell_time_ms"] / 1000.0,
             )
 
-        from datetime import datetime, timezone
         from signaldeck.storage.models import Signal, ActivityEntry
         from signaldeck.engine.classifier import SignalClassifier
         from signaldeck.decoders.base import SignalInfo

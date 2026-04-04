@@ -41,6 +41,7 @@ storage:
 
 logging:
   level: "INFO"
+  log_dir: "data/logs"
 
 auth:
   enabled: false  # set to true to require login
