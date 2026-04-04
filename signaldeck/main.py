@@ -373,7 +373,10 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
         _gqrx_tuned_freq = None
 
         async def _handle_gqrx_tuning():
-            """Check if user selected a frequency and tune gqrx to it."""
+            """Check if user selected a frequency and tune gqrx to it.
+
+            Also enables RDS for FM broadcasts and polls for RDS data.
+            """
             nonlocal _gqrx_tuned_freq
             if not gqrx_device or not audio_request_fn:
                 return
@@ -384,6 +387,24 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                     await gqrx_device.tune(freq_hz)
                     _gqrx_tuned_freq = freq_hz
                     logger.debug("gqrx: tuned to %.3f MHz", freq_hz / 1e6)
+                    # Enable RDS for FM broadcast frequencies
+                    if 87_500_000 <= freq_hz <= 108_000_000:
+                        await gqrx_device.enable_rds()
+
+                # Poll gqrx for RDS data and broadcast it
+                if 87_500_000 <= freq_hz <= 108_000_000:
+                    rds = await gqrx_device.get_rds()
+                    if rds and rds.get("ps_name") and ws_broadcast:
+                        broadcast_fn, msg_fn = ws_broadcast
+                        msg = msg_fn(
+                            frequency_hz=freq_hz,
+                            bandwidth_hz=200_000,
+                            power=-30.0,
+                            modulation="FM",
+                            protocol="broadcast_fm",
+                        )
+                        msg["rds"] = rds
+                        await broadcast_fn(msg)
             else:
                 if _gqrx_tuned_freq is not None:
                     _gqrx_tuned_freq = None
@@ -413,30 +434,6 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                                                 rds_callback=on_rds)
                             logger.info("Audio streaming ended, resuming scan")
                             continue
-
-                    # When gqrx is tuned, do a focused SDR dwell on that
-                    # frequency for waterfall + RDS before scanning
-                    if gqrx_device and _gqrx_tuned_freq and device:
-                        import numpy as np
-                        from signaldeck.engine.scanner import compute_power_spectrum
-                        try:
-                            device.set_sample_rate(2_000_000)
-                            device.start_stream()
-                            device.tune(_gqrx_tuned_freq)
-                            await asyncio.sleep(0.01)
-                            dwell_samples = device.read_samples(131_072)
-                            device.stop_stream()
-                            if dwell_samples is not None and len(dwell_samples) >= 1024:
-                                # Waterfall FFT
-                                power_db = compute_power_spectrum(
-                                    dwell_samples[:1024], fft_size=1024)
-                                await on_fft(_gqrx_tuned_freq, 2_000_000,
-                                             power_db)
-                                # RDS decode
-                                if 87_500_000 <= _gqrx_tuned_freq <= 108_000_000:
-                                    await on_rds(_gqrx_tuned_freq, dwell_samples)
-                        except Exception as e:
-                            logger.debug("Focused dwell failed: %s", e)
 
                     # SoapySDR handles scanning
                     signals = await scanner.sweep_once(

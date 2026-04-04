@@ -116,3 +116,45 @@ class GqrxClient:
         resp = await self._send_command("U RECORD 0")
         if resp != "RPRT 0":
             raise GqrxConnectionError(f"stop_recording failed: {resp}")
+
+    # --- RDS ---
+
+    async def set_rds(self, enabled: bool) -> None:
+        resp = await self._send_command(f"U RDS {1 if enabled else 0}")
+        if resp != "RPRT 0":
+            raise GqrxConnectionError(f"set_rds failed: {resp}")
+
+    async def get_rds_enabled(self) -> bool:
+        resp = await self._send_command("u RDS")
+        return resp.strip() == "1"
+
+    async def get_rds_pi(self) -> str:
+        resp = await self._send_command("p RDS_PI")
+        return resp.strip()
+
+    async def get_rds_ps_name(self) -> str:
+        resp = await self._send_command("p RDS_PS_NAME")
+        return resp.strip()
+
+    async def get_rds_radiotext(self) -> str:
+        resp = await self._send_command("p RDS_RADIOTEXT")
+        return resp.strip()
+
+    # --- DSP / Mute ---
+
+    async def get_dsp_status(self) -> bool:
+        resp = await self._send_command("u DSP")
+        return resp.strip() == "1"
+
+    async def set_dsp(self, enabled: bool) -> None:
+        resp = await self._send_command(f"U DSP {1 if enabled else 0}")
+        if resp != "RPRT 0":
+            raise GqrxConnectionError(f"set_dsp failed: {resp}")
+
+    async def get_audio_gain(self) -> float:
+        resp = await self._send_command("l AF")
+        return float(resp)
+
+    async def get_version(self) -> str:
+        resp = await self._send_command("_")
+        return resp.strip()

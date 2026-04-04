@@ -49,6 +49,32 @@ class GqrxDevice:
     async def stop_recording(self) -> None:
         await self._client.stop_recording()
 
+    async def enable_rds(self) -> None:
+        """Enable RDS decoder in gqrx (WFM mode only)."""
+        try:
+            await self._client.set_rds(True)
+        except Exception as e:
+            logger.debug("Could not enable RDS: %s", e)
+
+    async def disable_rds(self) -> None:
+        await self._client.set_rds(False)
+
+    async def get_rds(self) -> dict | None:
+        """Poll gqrx for current RDS data. Returns dict or None."""
+        try:
+            pi = await self._client.get_rds_pi()
+            if not pi or pi == "0000":
+                return None
+            ps = await self._client.get_rds_ps_name()
+            rt = await self._client.get_rds_radiotext()
+            return {
+                "pi_code": pi,
+                "ps_name": ps.strip() if ps else "",
+                "radio_text": rt.strip() if rt else "",
+            }
+        except Exception:
+            return None
+
     async def close(self) -> None:
         await self._client.disconnect()
-        logger.info("gqrx device %s closed", self.info.label)
+        logger.debug("gqrx device %s closed", self.info.label)

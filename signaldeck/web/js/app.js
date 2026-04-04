@@ -136,6 +136,7 @@ function dashboard() {
     wsReconnectTimer: null,
 
     // --- Waterfall ---
+    showWaterfall: false,
     waterfall: null,
 
     // =====================================================
@@ -154,11 +155,8 @@ function dashboard() {
       // Connect WebSockets
       this.connectWebSockets();
 
-      // Initialize waterfall after DOM is ready
+      // Initialize components after DOM is ready
       this.$nextTick(() => {
-        if (typeof Waterfall !== 'undefined') {
-          this.waterfall = new Waterfall('waterfall-canvas');
-        }
         if (typeof AudioPlayer !== 'undefined') {
           this.audioPlayer = new AudioPlayer();
         }
@@ -238,8 +236,10 @@ function dashboard() {
         this.handleSignalMessage(data);
       });
 
-      // Waterfall FFT WebSocket
-      this.connectWsWaterfall(`${wsBase}/ws/waterfall`);
+      // Waterfall FFT WebSocket — only connect when visible
+      if (this.showWaterfall) {
+        this.connectWsWaterfall(`${wsBase}/ws/waterfall`);
+      }
     },
 
     connectWs(url, onMessage) {

@@ -90,13 +90,21 @@
         </div>
       </div>
 
-      <!-- Waterfall -->
-      <div class="card waterfall-card">
+      <!-- Waterfall (toggleable) -->
+      <div class="card waterfall-card" x-show="showWaterfall">
         <div class="card-header">
           <h3>Waterfall / Spectrogram</h3>
-          <span class="badge badge-blue" x-show="scanning">SCANNING</span>
+          <div style="display:flex;gap:6px;align-items:center">
+            <span class="badge badge-blue" x-show="audioPlaying" x-text="(audioFreqMhz || '--') + ' MHz'"></span>
+            <button class="btn btn-small" @click="showWaterfall = false; if (wsWaterfall) { wsWaterfall.close(); wsWaterfall = null; }">Hide</button>
+          </div>
         </div>
         <canvas id="waterfall-canvas" width="1024" height="250"></canvas>
+      </div>
+      <div x-show="!showWaterfall" style="margin-bottom:8px">
+        <button class="btn btn-small" @click="showWaterfall = true; $nextTick(() => { waterfall = new Waterfall('waterfall-canvas'); const wsBase = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host; connectWsWaterfall(wsBase + '/ws/waterfall'); })">
+          Show Waterfall
+        </button>
       </div>
 
       <!-- Audio Player (above signals so clicking tune is convenient) -->
