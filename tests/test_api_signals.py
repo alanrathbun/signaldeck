@@ -83,3 +83,38 @@ async def test_enrichment_endpoint(client):
     assert data[key]["confidence"] == 0.8
     assert data[key]["last_activity"]["decoder"] == "noaa"
     assert data[key]["last_activity"]["type"] == "weather"
+
+
+async def test_signal_decoder_results_endpoint(client):
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    sig_id = await db.upsert_signal(Signal(frequency=433_920_000.0, bandwidth=25000.0, modulation="OOK",
+        protocol="ism", first_seen=now, last_seen=now, hit_count=1, avg_strength=-40.0, confidence=0.7))
+    activity_id = await db.insert_activity(ActivityEntry(signal_id=sig_id, timestamp=now, duration=0.35, strength=-40.0,
+        decoder_used="ism_triage", result_type="burst", summary="433.920 MHz ISM burst"))
+    await db.insert_decoder_result(activity_id, decoder="ism_triage", protocol="ism", result_type="burst",
+        content={"signature": "sparse_pulse_train"})
+
+    resp = await client.get(f"/api/signals/{sig_id}/decoder-results")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["decoder"] == "ism_triage"
+    assert data[0]["content"]["signature"] == "sparse_pulse_train"
+
+
+async def test_ism_activity_endpoint(client):
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    sig_id = await db.upsert_signal(Signal(frequency=433_920_000.0, bandwidth=25000.0, modulation="OOK",
+        protocol="ism", first_seen=now, last_seen=now, hit_count=1, avg_strength=-40.0, confidence=0.7))
+    activity_id = await db.insert_activity(ActivityEntry(signal_id=sig_id, timestamp=now, duration=0.35, strength=-40.0,
+        decoder_used="rtl_433", result_type="data", summary="rtl_433 sensor"))
+    await db.insert_decoder_result(activity_id, decoder="rtl_433", protocol="rtl433", result_type="data",
+        content={"model": "Acurite-Tower"})
+
+    resp = await client.get("/api/ism/activity")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["decoder"] == "rtl_433"

@@ -92,6 +92,25 @@ async def list_signals(limit: int = Query(default=200, ge=1, le=5000),
         for s in signals
     ]
 
+
+@router.get("/signals/{signal_id}/decoder-results")
+async def list_signal_decoder_results(signal_id: int, limit: int = Query(default=50, ge=1, le=500)):
+    db = get_db()
+    return await db.get_decoder_results(signal_id=signal_id, limit=limit)
+
+
+@router.get("/ism/activity")
+async def list_ism_activity(limit: int = Query(default=50, ge=1, le=500)):
+    db = get_db()
+    triage = await db.get_decoder_results(decoder="ism_triage", limit=limit)
+    decoded = await db.get_decoder_results(decoder="rtl_433", limit=limit)
+    combined = sorted(
+        [*triage, *decoded],
+        key=lambda item: item["timestamp"],
+        reverse=True,
+    )
+    return combined[:limit]
+
 @router.get("/activity")
 async def list_activity(limit: int = Query(default=50, ge=1, le=1000)):
     db = get_db()

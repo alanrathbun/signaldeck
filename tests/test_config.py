@@ -17,11 +17,11 @@ def test_load_custom_config(tmp_path: Path):
     custom = tmp_path / "custom.yaml"
     custom.write_text(
         "scanner:\n"
-        "  squelch_offset: 20\n"
+        "  squelch_offset: 25\n"
         "  fft_size: 2048\n"
     )
-    cfg = load_config(str(custom))
-    assert cfg["scanner"]["squelch_offset"] == 20
+    cfg = load_config(str(custom), load_user_settings=False)
+    assert cfg["scanner"]["squelch_offset"] == 25
     assert cfg["scanner"]["fft_size"] == 2048
     # defaults still present for keys not overridden
     assert cfg["scanner"]["dwell_time_ms"] == 50
@@ -50,3 +50,10 @@ def test_default_config_has_gqrx_settings():
     cfg = load_config(None, load_user_settings=False)
     assert cfg["devices"]["gqrx_auto_detect"] is True
     assert cfg["devices"]["gqrx_instances"] == []
+
+
+def test_default_config_has_scan_profiles():
+    """Default config enables curated scan profiles."""
+    cfg = load_config(None, load_user_settings=False)
+    assert isinstance(cfg["scanner"]["scan_profiles"], list)
+    assert "likely_local_voice" in cfg["scanner"]["scan_profiles"]

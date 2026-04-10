@@ -13,25 +13,22 @@ scanner:
   min_signal_strength: -30  # dBFS, ignore signals weaker than this
   dwell_time_ms: 50   # time per frequency step
   fft_size: 1024
+  ism_burst_enabled: true
+  ism_burst_sample_rate: 250000
+  ism_burst_duration_ms: 350
+  ism_burst_cooldown_s: 20
+  ism_max_bursts_per_sweep: 3
+  scan_profiles:
+    - likely_local_voice
+    - civil_aircraft
+    - marine_weather
+    - digital_signal_hunting
   sweep_ranges:
     - label: "VHF Low"
       start_mhz: 25
       end_mhz: 54
-    - label: "VHF High"
-      start_mhz: 134
-      end_mhz: 174
-    - label: "UHF"
-      start_mhz: 400
-      end_mhz: 512
-    - label: "Airband"
-      start_mhz: 118
-      end_mhz: 137
-    - label: "ISM 433"
-      start_mhz: 430
-      end_mhz: 440
-    - label: "Broadcast FM"
-      start_mhz: 88
-      end_mhz: 108
+      step_khz: 100
+      priority: 8
 
 audio:
   sample_rate: 48000

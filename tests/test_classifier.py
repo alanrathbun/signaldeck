@@ -54,3 +54,19 @@ def test_classify_unknown():
     signal = SignalInfo(frequency_hz=300e6, bandwidth_hz=25e3, peak_power=-70.0, modulation="unknown")
     result = classifier.classify(signal)
     assert result.modulation in ("FM", "AM", "unknown")
+
+
+def test_classify_marine_band():
+    classifier = SignalClassifier()
+    signal = SignalInfo(frequency_hz=156.8e6, bandwidth_hz=12_500.0, peak_power=-45.0, modulation="unknown")
+    result = classifier.classify(signal)
+    assert result.protocol_hint == "marine"
+    assert result.modulation == "FM"
+
+
+def test_classify_key_fob_band():
+    classifier = SignalClassifier()
+    signal = SignalInfo(frequency_hz=433.92e6, bandwidth_hz=20_000.0, peak_power=-55.0, modulation="unknown")
+    result = classifier.classify(signal)
+    assert result.protocol_hint == "ism"
+    assert result.modulation in ("OOK", "unknown")

@@ -2,7 +2,7 @@ import json
 import shutil
 import pytest
 from signaldeck.decoders.base import SignalInfo
-from signaldeck.decoders.ism import IsmDecoder, parse_rtl433_json
+from signaldeck.decoders.ism import IsmDecoder, parse_rtl433_json, summarize_rtl433_json
 
 def test_ism_decoder_properties():
     decoder = IsmDecoder()
@@ -39,6 +39,18 @@ def test_parse_rtl433_json_valid():
 def test_parse_rtl433_json_invalid():
     assert parse_rtl433_json("not json") is None
     assert parse_rtl433_json("") is None
+
+
+def test_summarize_rtl433_json():
+    summary = summarize_rtl433_json({
+        "model": "Acurite-Tower",
+        "id": 12345,
+        "temperature_C": 22.5,
+        "humidity": 45,
+    })
+    assert "Acurite-Tower" in summary
+    assert "id=12345" in summary
+    assert "temperature_C=22.5" in summary
 
 @pytest.mark.skipif(not shutil.which("rtl_433"), reason="rtl_433 not installed")
 def test_ism_decoder_tool_available():

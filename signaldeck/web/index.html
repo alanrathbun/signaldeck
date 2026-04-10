@@ -570,10 +570,32 @@
           </div>
         </div>
 
+        <!-- Scan Profiles -->
+        <div class="card">
+          <div class="card-header">
+            <h3>Scan Profiles</h3>
+          </div>
+          <div class="settings-list">
+            <div style="padding:8px 12px;display:flex;flex-wrap:wrap;gap:8px">
+              <template x-for="profile in availableScanProfiles" :key="profile.key">
+                <button class="btn btn-small"
+                        :style="editSettings.scan_profiles.includes(profile.key) ? 'background:#1f6feb;color:#fff' : ''"
+                        @click="toggleScanProfile(profile.key)"
+                        :title="profile.description"
+                        x-text="profile.label">
+                </button>
+              </template>
+            </div>
+            <div class="setting-row" x-show="availableScanProfiles.length === 0">
+              <span class="setting-label">No scan profiles available.</span>
+            </div>
+          </div>
+        </div>
+
         <!-- Scan Ranges (editable) -->
         <div class="card">
           <div class="card-header">
-            <h3>Scan Ranges</h3>
+            <h3>Custom Scan Ranges</h3>
             <div style="display:flex;gap:6px">
               <button class="btn btn-small btn-primary" @click="addScanRange()">+ Custom</button>
               <button class="btn btn-small" @click="showDefaultRanges = !showDefaultRanges"
@@ -607,11 +629,15 @@
                 <input type="number" class="form-input" style="width:100px" placeholder="End MHz" step="0.1"
                        x-model.number="editSettings.scan_ranges[i].end_mhz">
                 <span style="color:#8b949e">MHz</span>
+                <input type="number" class="form-input" style="width:90px" placeholder="Step kHz" step="0.5"
+                       x-model.number="editSettings.scan_ranges[i].step_khz">
+                <input type="number" class="form-input" style="width:80px" placeholder="Priority" step="1"
+                       x-model.number="editSettings.scan_ranges[i].priority">
                 <button class="btn btn-small btn-danger" @click="removeScanRange(i)" title="Remove">&times;</button>
               </div>
             </template>
             <div class="setting-row" x-show="editSettings.scan_ranges.length === 0">
-              <span class="setting-label">No ranges configured. Add a preset or custom range above.</span>
+              <span class="setting-label">No custom ranges configured. Enabled scan profiles still contribute their own prioritized ranges.</span>
             </div>
           </div>
         </div>

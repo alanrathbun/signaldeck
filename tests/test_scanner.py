@@ -11,6 +11,7 @@ from signaldeck.engine.scanner import (
     compute_power_spectrum,
     estimate_noise_floor,
 )
+from signaldeck.engine.scan_presets import resolve_sweep_ranges
 
 
 def test_scan_range():
@@ -70,8 +71,22 @@ def test_detect_signals_above_threshold():
 
 def test_scan_range_from_config():
     """ScanRange can be created from config dict."""
-    cfg = {"start_mhz": 118, "end_mhz": 137, "label": "Airband"}
+    cfg = {"start_mhz": 118, "end_mhz": 137, "label": "Airband", "step_khz": 25, "priority": 19}
     sr = ScanRange.from_config(cfg)
     assert sr.start_hz == 118e6
     assert sr.end_hz == 137e6
+    assert sr.step_hz == 25e3
     assert sr.label == "Airband"
+    assert sr.priority == 19
+
+
+def test_resolve_sweep_ranges_includes_profiles_and_priority():
+    scanner_cfg = {
+        "scan_profiles": ["marine_weather", "digital_signal_hunting"],
+        "sweep_ranges": [{"label": "Custom", "start_mhz": 50, "end_mhz": 51, "priority": 30}],
+    }
+    ranges = resolve_sweep_ranges(scanner_cfg)
+    labels = [rng["label"] for rng in ranges]
+    assert labels[0] == "Custom"
+    assert "Marine VHF" in labels
+    assert "433 MHz ISM" in labels

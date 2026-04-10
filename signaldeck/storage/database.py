@@ -372,3 +372,48 @@ class Database:
         if row is None:
             return None
         return json.loads(row["content"])
+
+    async def get_decoder_results(
+        self,
+        *,
+        signal_id: int | None = None,
+        decoder: str | None = None,
+        protocol: str | None = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        where = []
+        params: list[object] = []
+        if signal_id is not None:
+            where.append("al.signal_id = ?")
+            params.append(signal_id)
+        if decoder is not None:
+            where.append("dr.decoder = ?")
+            params.append(decoder)
+        if protocol is not None:
+            where.append("dr.protocol = ?")
+            params.append(protocol)
+        where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+        params.append(limit)
+        cursor = await self._conn.execute(
+            f"""SELECT dr.*, al.signal_id
+                FROM decoder_results dr
+                JOIN activity_log al ON dr.activity_id = al.id
+                {where_sql}
+                ORDER BY dr.timestamp DESC
+                LIMIT ?""",
+            params,
+        )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "id": row["id"],
+                "activity_id": row["activity_id"],
+                "signal_id": row["signal_id"],
+                "decoder": row["decoder"],
+                "protocol": row["protocol"],
+                "result_type": row["result_type"],
+                "timestamp": row["timestamp"],
+                "content": json.loads(row["content"]),
+            }
+            for row in rows
+        ]

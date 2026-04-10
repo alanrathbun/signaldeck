@@ -36,3 +36,11 @@ async def test_api_returns_json(client):
 async def test_unknown_route_returns_404(client):
     resp = await client.get("/api/nonexistent")
     assert resp.status_code == 404
+
+
+async def test_settings_exposes_scan_profiles(client):
+    resp = await client.get("/api/settings")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "available_scan_profiles" in data["scanner"]
+    assert "resolved_sweep_ranges" in data["scanner"]

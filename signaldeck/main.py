@@ -8,6 +8,8 @@ import click
 from signaldeck import __version__
 from signaldeck.config import load_config
 from signaldeck.engine.channelizer import channelize
+from signaldeck.engine.ism_workflow import capture_iq_burst, summarize_burst_triage, triage_ism_burst
+from signaldeck.engine.scan_presets import resolve_sweep_ranges
 
 
 def setup_logging(level: str, log_dir: str = "data/logs") -> Path:
@@ -253,7 +255,7 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
 
         # Build scan ranges and scanner (only if we have an SDR device)
         scanner = None
-        ranges = [ScanRange.from_config(r) for r in cfg["scanner"]["sweep_ranges"]]
+        ranges = [ScanRange.from_config(r) for r in resolve_sweep_ranges(cfg["scanner"])]
         if device:
             scanner = FrequencyScanner(
                 device=device,
@@ -266,11 +268,14 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
         from signaldeck.storage.models import Signal, ActivityEntry
         from signaldeck.engine.classifier import SignalClassifier
         from signaldeck.decoders.base import SignalInfo
+        from signaldeck.decoders.ism import IsmDecoder, summarize_rtl433_json
 
         classifier = SignalClassifier()
 
         from signaldeck.decoders.rds import RdsDecoder
         rds_decoder = RdsDecoder()
+        ism_decoder = IsmDecoder()
+        ism_capture_cooldowns: dict[int, float] = {}
 
         # WebSocket broadcast (only when dashboard is running)
         ws_broadcast = None
@@ -297,8 +302,89 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
 
         min_strength = cfg["scanner"].get("min_signal_strength", -50)
 
+        async def _single_iq_source(iq_samples):
+            yield iq_samples
+
+        async def run_ism_burst_workflow(signal_id: int, classified: SignalInfo, peak_power: float) -> None:
+            if not device or not cfg["scanner"].get("ism_burst_enabled", True):
+                return
+
+            freq_key = int(round(classified.frequency_hz / 5_000.0) * 5_000)
+            cooldown_s = float(cfg["scanner"].get("ism_burst_cooldown_s", 20))
+            now_mono = asyncio.get_running_loop().time()
+            last_capture = ism_capture_cooldowns.get(freq_key)
+            if last_capture is not None and now_mono - last_capture < cooldown_s:
+                return
+            ism_capture_cooldowns[freq_key] = now_mono
+
+            burst_sample_rate = float(cfg["scanner"].get("ism_burst_sample_rate", 250_000))
+            burst_duration_s = float(cfg["scanner"].get("ism_burst_duration_ms", 350)) / 1000.0
+            iq_samples = await capture_iq_burst(
+                device,
+                classified.frequency_hz,
+                sample_rate=burst_sample_rate,
+                duration_s=burst_duration_s,
+            )
+            if iq_samples is None or len(iq_samples) < 256:
+                return
+
+            triage = triage_ism_burst(iq_samples, burst_sample_rate)
+            triage_summary = summarize_burst_triage(classified.frequency_hz, triage)
+            triage_activity = ActivityEntry(
+                signal_id=signal_id,
+                timestamp=datetime.now(timezone.utc),
+                duration=burst_duration_s,
+                strength=peak_power,
+                decoder_used="ism_triage",
+                result_type="burst",
+                summary=triage_summary,
+                raw_result=triage,
+            )
+            triage_activity_id = await db.insert_activity(triage_activity)
+            await db.insert_decoder_result(
+                triage_activity_id,
+                decoder="ism_triage",
+                protocol="ism",
+                result_type="burst",
+                content=triage,
+            )
+
+            if not ism_decoder.tool_available():
+                return
+
+            decode_signal = SignalInfo(
+                frequency_hz=classified.frequency_hz,
+                bandwidth_hz=classified.bandwidth_hz,
+                peak_power=peak_power,
+                modulation=classified.modulation,
+                sample_rate=burst_sample_rate,
+                protocol_hint="ism",
+            )
+            decoded_results = await ism_decoder.decode_to_list(decode_signal, _single_iq_source(iq_samples))
+            for result in decoded_results[:10]:
+                summary = summarize_rtl433_json(result.content)
+                activity = ActivityEntry(
+                    signal_id=signal_id,
+                    timestamp=result.timestamp,
+                    duration=burst_duration_s,
+                    strength=peak_power,
+                    decoder_used="rtl_433",
+                    result_type=result.result_type,
+                    summary=summary,
+                    raw_result=result.content,
+                )
+                activity_id = await db.insert_activity(activity)
+                await db.insert_decoder_result(
+                    activity_id,
+                    decoder="rtl_433",
+                    protocol=result.protocol,
+                    result_type=result.result_type,
+                    content=result.content,
+                )
+
         async def on_signals(signals):
             now = datetime.now(timezone.utc)
+            ism_candidates: list[tuple[int, SignalInfo, float]] = []
             for sig in signals:
                 # Filter out weak signals below the minimum strength threshold
                 if sig.peak_power < min_strength:
@@ -340,6 +426,9 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                 )
                 await db.insert_activity(entry)
 
+                if classified.protocol_hint == "ism":
+                    ism_candidates.append((signal_id, classified, sig.peak_power))
+
                 # Broadcast to WebSocket clients
                 if ws_broadcast:
                     broadcast_fn, msg_fn = ws_broadcast
@@ -351,6 +440,18 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                         protocol=classified.protocol_hint,
                     )
                     await broadcast_fn(msg)
+
+            max_bursts = int(cfg["scanner"].get("ism_max_bursts_per_sweep", 3))
+            ism_candidates.sort(key=lambda item: item[2], reverse=True)
+            for signal_id, classified, peak_power in ism_candidates[:max_bursts]:
+                try:
+                    await run_ism_burst_workflow(signal_id, classified, peak_power)
+                except Exception as e:
+                    logger.warning(
+                        "ISM burst workflow failed at %.3f MHz: %s",
+                        classified.frequency_hz / 1e6,
+                        e,
+                    )
 
         # FFT broadcast callback for waterfall display
         async def on_fft(center_freq_hz, sample_rate, power_db):
@@ -435,9 +536,19 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
             nonlocal _gqrx_tuned_freq
             if not gqrx_device or not audio_request_fn:
                 return
+            _last_volume = None
             while True:
                 try:
                     audio_req = audio_request_fn()
+
+                    # Handle volume changes (0.0-1.0 -> gqrx AF gain 0-100)
+                    vol = audio_req.get("volume")
+                    if vol is not None and vol != _last_volume:
+                        af_gain = vol * 100.0
+                        await gqrx_device._client.set_audio_gain(af_gain)
+                        _last_volume = vol
+                        logger.debug("gqrx: volume %.0f%% (AF gain %.0f)", vol * 100, af_gain)
+
                     if audio_req.get("active") and audio_req.get("frequency_hz"):
                         freq_hz = audio_req["frequency_hz"]
                         if freq_hz != _gqrx_tuned_freq:
@@ -445,6 +556,10 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                             mode = _gqrx_mode_for(audio_req.get("modulation"), freq_hz)
                             await gqrx_device.set_mode(mode)
                             await gqrx_device.tune(freq_hz)
+                            # Ensure DSP is on and audio gain is audible
+                            await gqrx_device._client.set_dsp(True)
+                            await gqrx_device._client.set_audio_gain(50)
+                            _last_volume = None
                             _gqrx_tuned_freq = freq_hz
                             logger.info("gqrx: tuned to %.3f MHz (mode=%s)", freq_hz / 1e6, mode)
                             # Enable RDS for FM broadcast frequencies
@@ -467,8 +582,11 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                                 await broadcast_fn(msg)
                     else:
                         if _gqrx_tuned_freq is not None:
+                            # Stop gqrx audio when user clicks Stop
+                            await gqrx_device._client.set_dsp(False)
+                            _last_volume = None
                             _gqrx_tuned_freq = None
-                            logger.debug("gqrx: idle")
+                            logger.info("gqrx: stopped (DSP off)")
                 except Exception as e:
                     logger.warning("gqrx tuning error: %s", e)
                 await asyncio.sleep(0.3)
@@ -523,7 +641,7 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                     scanner._squelch_offset = cfg["scanner"]["squelch_offset"]
                     scanner._dwell_time = cfg["scanner"]["dwell_time_ms"] / 1000.0
                     scanner._scan_ranges = [
-                        ScanRange.from_config(r) for r in cfg["scanner"]["sweep_ranges"]
+                        ScanRange.from_config(r) for r in resolve_sweep_ranges(cfg["scanner"])
                     ]
                     min_strength = cfg["scanner"].get("min_signal_strength", -30)
                     device.set_gain(cfg["devices"]["gain"])
@@ -659,7 +777,7 @@ def sweep(range_spec: str | None, config_path: str | None) -> None:
         end = float(parts[1]) * 1e6
         ranges = [ScanRange(start_hz=start, end_hz=end, label=range_spec)]
     else:
-        ranges = [ScanRange.from_config(r) for r in cfg["scanner"]["sweep_ranges"]]
+        ranges = [ScanRange.from_config(r) for r in resolve_sweep_ranges(cfg["scanner"])]
 
     async def _sweep() -> None:
         mgr = DeviceManager()

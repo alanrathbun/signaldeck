@@ -7,7 +7,7 @@ router = APIRouter()
 _audio_clients: dict[WebSocket, float | None] = {}
 
 # Shared state for audio streaming from scanner
-_audio_request: dict = {"frequency_hz": None, "active": False, "modulation": None}
+_audio_request: dict = {"frequency_hz": None, "active": False, "modulation": None, "volume": None}
 
 
 def get_audio_request() -> dict:
@@ -55,6 +55,9 @@ async def ws_audio(websocket: WebSocket):
                     _audio_request["active"] = False
                     _audio_request["modulation"] = None
                 await websocket.send_json({"type": "unsubscribed"})
+            elif data.get("type") == "volume":
+                _audio_request["volume"] = data.get("level")
+                logger.debug("Audio volume: %s", data.get("level"))
     except WebSocketDisconnect:
         pass
     finally:

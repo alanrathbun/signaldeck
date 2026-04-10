@@ -80,6 +80,7 @@ function dashboard() {
       min_signal_strength: -50,
       dwell_time_ms: 50,
       fft_size: 1024,
+      scan_profiles: [],
       scan_ranges: [],
       sample_rate: 48000,
       recording_dir: 'data/recordings',
@@ -88,21 +89,26 @@ function dashboard() {
       tuner_device: 'none',
     },
 
+    availableScanProfiles: [],
+
     // --- Default scan range presets ---
     defaultScanRanges: [
-      { label: 'Broadcast FM', start_mhz: 88, end_mhz: 108 },
-      { label: 'Airband', start_mhz: 118, end_mhz: 137 },
-      { label: 'VHF Low', start_mhz: 25, end_mhz: 54 },
-      { label: 'VHF High', start_mhz: 134, end_mhz: 174 },
-      { label: 'UHF', start_mhz: 400, end_mhz: 512 },
-      { label: 'ISM 433', start_mhz: 430, end_mhz: 440 },
-      { label: 'ISM 915', start_mhz: 902, end_mhz: 928 },
-      { label: 'Marine VHF', start_mhz: 156, end_mhz: 163 },
-      { label: 'Weather (NOAA)', start_mhz: 162.4, end_mhz: 162.55 },
-      { label: 'FRS/GMRS', start_mhz: 462, end_mhz: 467.7125 },
-      { label: 'MURS', start_mhz: 151.82, end_mhz: 154.6 },
-      { label: 'ADS-B (1090)', start_mhz: 1088, end_mhz: 1092 },
-      { label: 'GPS L1', start_mhz: 1574, end_mhz: 1577 },
+      { label: 'Broadcast FM', start_mhz: 88, end_mhz: 108, step_khz: 200, priority: 20 },
+      { label: 'Airband', start_mhz: 118, end_mhz: 137, step_khz: 25, priority: 19 },
+      { label: 'VHF Low', start_mhz: 25, end_mhz: 54, step_khz: 100, priority: 8 },
+      { label: 'VHF High', start_mhz: 134, end_mhz: 174, step_khz: 25, priority: 14 },
+      { label: 'UHF', start_mhz: 400, end_mhz: 512, step_khz: 25, priority: 14 },
+      { label: 'ISM 315', start_mhz: 314.8, end_mhz: 315.3, step_khz: 25, priority: 18 },
+      { label: 'ISM 390', start_mhz: 389.8, end_mhz: 390.3, step_khz: 25, priority: 17 },
+      { label: 'ISM 433', start_mhz: 433, end_mhz: 435, step_khz: 25, priority: 20 },
+      { label: 'ISM 915', start_mhz: 902, end_mhz: 928, step_khz: 100, priority: 18 },
+      { label: 'Marine VHF', start_mhz: 156, end_mhz: 163, step_khz: 25, priority: 19 },
+      { label: 'Weather (NOAA)', start_mhz: 162.4, end_mhz: 162.55, step_khz: 25, priority: 20 },
+      { label: 'FRS/GMRS', start_mhz: 462.55, end_mhz: 467.725, step_khz: 12.5, priority: 18 },
+      { label: 'MURS', start_mhz: 151.82, end_mhz: 154.6, step_khz: 12.5, priority: 15 },
+      { label: 'ADS-B (1090)', start_mhz: 1088, end_mhz: 1092, step_khz: 250, priority: 20 },
+      { label: 'NOAA APT', start_mhz: 137, end_mhz: 138, step_khz: 25, priority: 16 },
+      { label: 'TV UHF', start_mhz: 470, end_mhz: 608, step_khz: 250, priority: 12 },
     ],
     showDefaultRanges: false,
 
@@ -398,6 +404,8 @@ function dashboard() {
     // API Calls
     // =====================================================
     async apiFetch(url, options = {}) {
+      const silent = options._silent;
+      delete options._silent;
       try {
         const resp = await fetch(url, {
           headers: { 'Content-Type': 'application/json', ...this.authHeaders(), ...options.headers },
@@ -411,30 +419,30 @@ function dashboard() {
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         return await resp.json();
       } catch (err) {
-        this.showToast(`API error: ${err.message}`, 'error');
+        if (!silent) this.showToast(`API error: ${err.message}`, 'error');
         return null;
       }
     },
 
     async fetchEnrichment() {
-      const data = await this.apiFetch('/api/signals/enrichment');
+      const data = await this.apiFetch('/api/signals/enrichment', { _silent: true });
       if (data) this.signalEnrichment = data;
     },
 
     async fetchRecordings() {
-      const data = await this.apiFetch('/api/recordings');
+      const data = await this.apiFetch('/api/recordings', { _silent: true });
       if (data) this.recordings = Array.isArray(data) ? data : (data.recordings || []);
     },
 
     async fetchBookmarks() {
-      const data = await this.apiFetch('/api/bookmarks');
+      const data = await this.apiFetch('/api/bookmarks', { _silent: true });
       if (data) this.bookmarks = Array.isArray(data) ? data : (data.bookmarks || []);
     },
 
     async fetchStatus() {
       const [status, settings] = await Promise.all([
-        this.apiFetch('/api/scanner/status'),
-        this.apiFetch('/api/settings'),
+        this.apiFetch('/api/scanner/status', { _silent: true }),
+        this.apiFetch('/api/settings', { _silent: true }),
       ]);
       if (status) {
         this.scannerStatus = { ...this.scannerStatus, ...status };
@@ -451,12 +459,17 @@ function dashboard() {
           this.editSettings.min_signal_strength = settings.scanner.min_signal_strength ?? -50;
           this.editSettings.dwell_time_ms = settings.scanner.dwell_time_ms ?? 50;
           this.editSettings.fft_size = settings.scanner.fft_size ?? 1024;
+          this.editSettings.scan_profiles = [...(settings.scanner.scan_profiles || [])];
+          this.availableScanProfiles = settings.scanner.available_scan_profiles || [];
           this.editSettings.scan_ranges = (settings.scanner.sweep_ranges || []).map(r => ({
             label: r.label || '',
             start_mhz: r.start_mhz,
             end_mhz: r.end_mhz,
+            step_khz: r.step_khz ?? 200,
+            priority: r.priority ?? 10,
           }));
-          this.scannerStatus.scan_ranges = this.editSettings.scan_ranges;
+          this.scannerStatus.scan_ranges = settings.scanner.resolved_sweep_ranges || this.editSettings.scan_ranges;
+          this.scannerStatus.scan_profiles = this.editSettings.scan_profiles;
           this.scannerStatus.squelch_offset = this.editSettings.squelch_offset;
           this.scannerStatus.fft_size = this.editSettings.fft_size;
           this.scannerStatus.dwell_time_ms = this.editSettings.dwell_time_ms;
@@ -492,7 +505,7 @@ function dashboard() {
     },
 
     addScanRange() {
-      this.editSettings.scan_ranges.push({ label: '', start_mhz: 0, end_mhz: 0 });
+      this.editSettings.scan_ranges.push({ label: '', start_mhz: 0, end_mhz: 0, step_khz: 200, priority: 10 });
     },
 
     addDefaultRange(preset) {
@@ -524,16 +537,24 @@ function dashboard() {
       this.editSettings.scan_ranges.splice(index, 1);
     },
 
+    toggleScanProfile(profileKey) {
+      if (this.editSettings.scan_profiles.includes(profileKey)) {
+        this.editSettings.scan_profiles = this.editSettings.scan_profiles.filter(p => p !== profileKey);
+      } else {
+        this.editSettings.scan_profiles.push(profileKey);
+      }
+    },
+
     async fetchStatusPage() {
       try {
-        const data = await this.apiFetch('/api/status');
+        const data = await this.apiFetch('/api/status', { _silent: true });
         if (data) this.statusData = data;
       } catch (e) { /* status page is non-critical */ }
       await this.fetchStatus();
     },
 
     async fetchAnalytics() {
-      const data = await this.apiFetch('/api/analytics/summary');
+      const data = await this.apiFetch('/api/analytics/summary', { _silent: true });
       if (data && this.charts) {
         this.$nextTick(() => {
           if (data.protocols || data.protocol_counts) {
@@ -547,17 +568,13 @@ function dashboard() {
     },
 
     async fetchLogFiles() {
-      try {
-        const data = await this.apiFetch('/api/logs');
-        if (data) this.logFiles = data;
-      } catch (e) { /* ignore */ }
+      const data = await this.apiFetch('/api/logs', { _silent: true });
+      if (data) this.logFiles = data;
     },
 
     async fetchCurrentLog() {
-      try {
-        const data = await this.apiFetch('/api/logs/current');
-        if (data) this.currentLog = data;
-      } catch (e) { /* ignore */ }
+      const data = await this.apiFetch('/api/logs/current', { _silent: true });
+      if (data) this.currentLog = data;
     },
 
     async selectLogFile(filename) {
@@ -920,7 +937,13 @@ function dashboard() {
 
     setAudioVolume(val) {
       this.audioVolume = parseFloat(val);
-      if (this.audioPlayer) this.audioPlayer.setVolume(this.audioVolume);
+      if (this.audioPlayer) {
+        this.audioPlayer.setVolume(this.audioVolume);
+        // In gqrx mode, send volume to backend
+        if (this.isGqrxBackend() && this.audioPlayer.ws && this.audioPlayer.ws.readyState === WebSocket.OPEN) {
+          this.audioPlayer.ws.send(JSON.stringify({ type: 'volume', level: this.audioVolume }));
+        }
+      }
     },
 
     // =====================================================
@@ -985,9 +1008,17 @@ function dashboard() {
     // Toast Notifications
     // =====================================================
     showToast(message, type = 'info') {
+      // Deduplicate: if this exact message is already showing, skip it
+      if (this.toasts.some(t => t.message === message && t.visible)) return;
+      // Cap visible toasts to prevent flood
+      while (this.toasts.length >= 3) {
+        this.toasts.shift();
+      }
       const id = ++this.toastCounter;
       this.toasts.push({ id, message, type, visible: true });
-      setTimeout(() => this.dismissToast(id), 4000);
+      // Errors stay 6s, everything else 3s
+      const delay = type === 'error' ? 6000 : 3000;
+      setTimeout(() => this.dismissToast(id), delay);
     },
 
     dismissToast(id) {

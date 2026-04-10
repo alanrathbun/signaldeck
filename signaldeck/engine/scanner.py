@@ -17,6 +17,7 @@ class ScanRange:
     end_hz: float
     step_hz: float = 200_000
     label: str = ""
+    priority: int = 10
 
     def frequencies(self) -> NDArray[np.float64]:
         return np.arange(self.start_hz, self.end_hz, self.step_hz)
@@ -26,7 +27,9 @@ class ScanRange:
         return cls(
             start_hz=cfg["start_mhz"] * 1e6,
             end_hz=cfg["end_mhz"] * 1e6,
+            step_hz=cfg.get("step_khz", 200) * 1e3,
             label=cfg.get("label", ""),
+            priority=cfg.get("priority", 10),
         )
 
 

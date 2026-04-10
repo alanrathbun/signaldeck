@@ -6,6 +6,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from signaldeck.api.server import get_config, get_db
+from signaldeck.engine.scan_presets import get_scan_profile_catalog, resolve_scan_profile_keys, resolve_sweep_ranges
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +31,14 @@ def set_scanner_state(status: str, mode: str = "sweep", active_devices: int = 1)
 @router.get("/scanner/status")
 async def scanner_status():
     config = get_config()
+    scanner_cfg = config.get("scanner", {})
     return {
         **_scanner_state,
-        "scan_ranges": config.get("scanner", {}).get("sweep_ranges", []),
-        "squelch_offset": config.get("scanner", {}).get("squelch_offset"),
-        "fft_size": config.get("scanner", {}).get("fft_size"),
+        "scan_ranges": resolve_sweep_ranges(scanner_cfg),
+        "scan_profiles": resolve_scan_profile_keys(scanner_cfg),
+        "available_scan_profiles": get_scan_profile_catalog(),
+        "squelch_offset": scanner_cfg.get("squelch_offset"),
+        "fft_size": scanner_cfg.get("fft_size"),
         "gain": config.get("devices", {}).get("gain"),
     }
 
@@ -78,9 +82,15 @@ async def get_status():
 async def get_settings():
     """Return full configuration for the settings page."""
     config = get_config()
+    scanner_cfg = config.get("scanner", {})
     return {
         "devices": config.get("devices", {}),
-        "scanner": config.get("scanner", {}),
+        "scanner": {
+            **scanner_cfg,
+            "scan_profiles": resolve_scan_profile_keys(scanner_cfg),
+            "resolved_sweep_ranges": resolve_sweep_ranges(scanner_cfg),
+            "available_scan_profiles": get_scan_profile_catalog(),
+        },
         "audio": config.get("audio", {}),
         "storage": config.get("storage", {}),
         "auth": {
@@ -96,6 +106,8 @@ class ScanRangeUpdate(BaseModel):
     label: str = ""
     start_mhz: float
     end_mhz: float
+    step_khz: float | None = None
+    priority: int | None = None
 
 
 class SettingsUpdate(BaseModel):
@@ -104,6 +116,7 @@ class SettingsUpdate(BaseModel):
     min_signal_strength: float | None = None
     dwell_time_ms: float | None = None
     fft_size: int | None = None
+    scan_profiles: list[str] | None = None
     scan_ranges: list[ScanRangeUpdate] | None = None
     # Audio settings
     sample_rate: int | None = None
@@ -145,9 +158,19 @@ async def update_settings(data: SettingsUpdate):
         config["scanner"]["fft_size"] = data.fft_size
         changed.append(f"fft_size={data.fft_size}")
 
+    if data.scan_profiles is not None:
+        config["scanner"]["scan_profiles"] = [str(profile) for profile in data.scan_profiles]
+        changed.append(f"scan_profiles={len(data.scan_profiles)} profiles")
+
     if data.scan_ranges is not None:
         config["scanner"]["sweep_ranges"] = [
-            {"label": r.label, "start_mhz": r.start_mhz, "end_mhz": r.end_mhz}
+            {
+                "label": r.label,
+                "start_mhz": r.start_mhz,
+                "end_mhz": r.end_mhz,
+                **({"step_khz": r.step_khz} if r.step_khz is not None else {}),
+                **({"priority": r.priority} if r.priority is not None else {}),
+            }
             for r in data.scan_ranges
         ]
         changed.append(f"scan_ranges={len(data.scan_ranges)} ranges")
@@ -196,6 +219,7 @@ def _persist_user_config(config: dict) -> None:
             "min_signal_strength": config["scanner"].get("min_signal_strength", -50),
             "dwell_time_ms": config["scanner"].get("dwell_time_ms", 50),
             "fft_size": config["scanner"].get("fft_size", 1024),
+            "scan_profiles": resolve_scan_profile_keys(config.get("scanner", {})),
             "sweep_ranges": config["scanner"].get("sweep_ranges", []),
         },
         "audio": {
