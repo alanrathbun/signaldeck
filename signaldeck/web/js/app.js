@@ -1277,25 +1277,6 @@ function dashboard() {
       return !!this.findBookmarkForFrequency(freqHz);
     },
 
-    async quickBookmark(sig) {
-      if (this.isBookmarked(sig.frequency)) {
-        this.showToast('Already bookmarked', 'info');
-        return;
-      }
-      const label = (sig.protocol || sig.modulation || 'Signal') + ' ' + this.formatFreq(sig.frequency);
-      await this.apiFetch('/api/bookmarks', {
-        method: 'POST',
-        body: JSON.stringify({
-          frequency_hz: sig.frequency,
-          label: label,
-          modulation: sig.modulation || 'FM',
-          decoder: sig.protocol || null,
-          priority: 3,
-        }),
-      });
-      this.showToast('Bookmarked ' + this.formatFreq(sig.frequency), 'success');
-      this.fetchBookmarks();
-    },
 
     // --- Bookmark edit/create modal methods ---
 

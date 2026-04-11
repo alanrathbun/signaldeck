@@ -280,9 +280,8 @@
                       <svg viewBox="0 0 20 20" width="12" height="12"><polygon points="4,2 18,10 4,18" fill="currentColor"/></svg>
                     </button>
                     <button class="btn btn-sm btn-success"
-                            @click="quickBookmark(sig)"
-                            :disabled="isBookmarked(sig.frequency)"
-                            :title="isBookmarked(sig.frequency) ? 'Already bookmarked' : 'Bookmark'">
+                            @click="openCreateBookmarkFromSignal(sig)"
+                            :title="isBookmarked(sig.frequency) ? 'Edit bookmark' : 'Bookmark'">
                       <svg viewBox="0 0 20 20" width="12" height="12"><path d="M5 2h10v16l-5-4-5 4V2z" fill="currentColor"/></svg>
                     </button>
                   </td>
