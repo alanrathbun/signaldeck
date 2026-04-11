@@ -1018,5 +1018,37 @@ def bookmark_add(frequency: str, label: str, decoder: str | None, priority: int)
     click.echo(f"Bookmark add not yet implemented: {frequency} ({label})")
 
 
+@cli.group()
+def auth() -> None:
+    """Manage SignalDeck authentication."""
+
+
+@auth.command("set-password")
+@click.option("--user", default="admin", show_default=True, help="Username to update.")
+@click.option(
+    "--password",
+    prompt=True,
+    hide_input=True,
+    confirmation_prompt=True,
+    help="New password (prompted if not provided).",
+)
+def auth_set_password(user: str, password: str) -> None:
+    """Reset a user's password without needing the current one.
+
+    Intended as a recovery path: the operator runs this on the server
+    host when they can't log in. Because CLI access implies local
+    authority over the server, this command bypasses the usual
+    current-password check that the HTTP change-password endpoint
+    enforces.
+    """
+    from signaldeck.api.auth import AuthManager
+    cfg = load_config(None)
+    cred_path = cfg.get("auth", {}).get("credentials_path", "config/credentials.yaml")
+    mgr = AuthManager(credentials_path=cred_path)
+    mgr.initialize()
+    mgr.change_password(user, password)
+    click.echo(f"Password updated for {user}.")
+
+
 if __name__ == "__main__":
     cli()
