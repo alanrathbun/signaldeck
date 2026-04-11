@@ -2,7 +2,7 @@ import logging
 from pathlib import Path
 
 import yaml
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi import Query
 from pydantic import BaseModel
 
@@ -159,6 +159,8 @@ class SettingsUpdate(BaseModel):
     # Device role settings
     scanner_device: str | None = None
     tuner_device: str | None = None
+    # Audio mode
+    audio_mode: str | None = None
 
 
 @router.put("/settings")
@@ -241,6 +243,15 @@ async def update_settings(data: SettingsUpdate):
             devices_cfg["tuner_device"] = data.tuner_device
             changed.append(f"tuner_device={data.tuner_device}")
 
+    if data.audio_mode is not None:
+        if data.audio_mode not in ("auto", "gqrx", "pcm_stream"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"invalid audio_mode: {data.audio_mode}",
+            )
+        config.setdefault("scanner", {})["audio_mode"] = data.audio_mode
+        changed.append(f"audio_mode={data.audio_mode}")
+
     # Persist settings to user config file so they survive restarts
     if changed:
         _persist_user_config(config)
@@ -274,6 +285,7 @@ def _persist_user_config(config: dict) -> None:
             "fft_size": config["scanner"].get("fft_size", 1024),
             "scan_profiles": resolve_scan_profile_keys(config.get("scanner", {})),
             "sweep_ranges": config["scanner"].get("sweep_ranges", []),
+            "audio_mode": config["scanner"].get("audio_mode", "auto"),
         },
         "audio": {
             "sample_rate": config.get("audio", {}).get("sample_rate", 48000),

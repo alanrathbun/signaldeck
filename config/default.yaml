@@ -26,6 +26,7 @@ scanner:
   scan_profiles:
     - rtl_priority_search
   sweep_ranges: []
+  audio_mode: auto   # auto | gqrx | pcm_stream — follows remote listeners when auto
 
 audio:
   sample_rate: 48000
