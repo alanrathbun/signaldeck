@@ -11,6 +11,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+MUTE_AF_GAIN_DB = -80.0  # gqrx's own "Mute" button sends a value in this range
+
 
 class AudioModeController:
     def __init__(self, gqrx) -> None:
@@ -29,8 +31,12 @@ class AudioModeController:
     ) -> None:
         """Apply the effective audio mode to gqrx.
 
-        - "gqrx"       → set AF gain to user_volume_db
-        - "pcm_stream" → set AF gain to 0 (muted, still tuned)
+        - "gqrx"       → set AF gain to user_volume_db (typically -60 to 0 dB)
+        - "pcm_stream" → set AF gain to MUTE_AF_GAIN_DB (-80 dB, practically silent)
+
+        gqrx's rigctl AF gain is attenuation in dB: 0 is loudest, negative
+        is quieter. MUTE_AF_GAIN_DB matches what gqrx's own "Mute" button
+        produces, so this is effectively equivalent to a user mute.
 
         No-op if the mode hasn't changed since the last call. rigctl
         failures are logged and swallowed.
@@ -39,7 +45,7 @@ class AudioModeController:
             return
         try:
             if effective_mode == "pcm_stream":
-                await self._gqrx.set_audio_gain(0.0)
+                await self._gqrx.set_audio_gain(MUTE_AF_GAIN_DB)
             elif effective_mode == "gqrx":
                 await self._gqrx.set_audio_gain(user_volume_db)
             else:
@@ -49,7 +55,7 @@ class AudioModeController:
             logger.info(
                 "Audio mode flip: applied effective_mode=%s (af_gain=%s)",
                 effective_mode,
-                0.0 if effective_mode == "pcm_stream" else user_volume_db,
+                MUTE_AF_GAIN_DB if effective_mode == "pcm_stream" else user_volume_db,
             )
         except Exception as e:
             logger.warning(

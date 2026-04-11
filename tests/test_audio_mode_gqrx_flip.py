@@ -1,6 +1,6 @@
-"""Integration test for audio mode flip: verify gqrx AF gain is muted to 0
-when effective mode is pcm_stream, and restored to stored volume when
-effective mode is gqrx."""
+"""Integration test for audio mode flip: verify gqrx AF gain is muted to a
+very negative dB value when effective mode is pcm_stream, and restored to
+stored volume when effective mode is gqrx."""
 import pytest
 
 from signaldeck.api.websocket import audio_stream
@@ -28,10 +28,14 @@ class FakeGqrx:
 
 
 async def test_flip_to_pcm_stream_mutes_gqrx():
+    from signaldeck.engine.audio_mode_controller import MUTE_AF_GAIN_DB
     gqrx = FakeGqrx()
     ctrl = AudioModeController(gqrx=gqrx)
     await ctrl.apply_effective_mode("pcm_stream", user_volume_db=5.0)
-    assert gqrx.af_gain_history[-1] == 0.0
+    # gqrx rigctl's AF gain is attenuation in dB — 0.0 is FULL VOLUME, not mute.
+    # The controller must pass a very negative value to actually silence gqrx.
+    assert gqrx.af_gain_history[-1] == MUTE_AF_GAIN_DB
+    assert gqrx.af_gain_history[-1] < -60.0  # sanity check: well below "quiet"
 
 
 async def test_flip_to_gqrx_restores_stored_volume():

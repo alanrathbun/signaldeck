@@ -213,7 +213,7 @@ function dashboard() {
       this.fetchStatus();
       this.statusPollTimer = setInterval(() => {
         this.fetchStatus();
-        if (this.currentPage === 'status' || this.currentPage === 'settings') {
+        if (this.currentPage === 'status' || this.currentPage === 'settings' || this.currentPage === 'live') {
           this.fetchStatusPage();
         }
       }, 3000);
@@ -275,6 +275,10 @@ function dashboard() {
         case 'recordings': this.fetchRecordings(); break;
         case 'bookmarks': this.fetchBookmarks(); break;
         case 'settings': this.fetchSettings(true); this.fetchSessions(); this.fetchStatusPage(); break;
+      }
+      // Always refresh /api/status on entry to pages that display audioStatus.
+      if (this.currentPage === 'live') {
+        this.fetchStatusPage();
       }
     },
 
