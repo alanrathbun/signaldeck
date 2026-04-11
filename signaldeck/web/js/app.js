@@ -211,7 +211,12 @@ function dashboard() {
 
       // Fetch scanner status frequently, but avoid hardware refreshes.
       this.fetchStatus();
-      this.statusPollTimer = setInterval(() => this.fetchStatus(), 3000);
+      this.statusPollTimer = setInterval(() => {
+        this.fetchStatus();
+        if (this.currentPage === 'status' || this.currentPage === 'settings') {
+          this.fetchStatusPage();
+        }
+      }, 3000);
 
       // Load bookmarks up-front so the Live page can flag already-bookmarked
       // signals without waiting for the user to visit the Bookmarks page.
@@ -269,7 +274,7 @@ function dashboard() {
       switch (this.currentPage) {
         case 'recordings': this.fetchRecordings(); break;
         case 'bookmarks': this.fetchBookmarks(); break;
-        case 'settings': this.fetchSettings(true); this.fetchSessions(); break;
+        case 'settings': this.fetchSettings(true); this.fetchSessions(); this.fetchStatusPage(); break;
       }
     },
 
