@@ -468,6 +468,13 @@ function dashboard() {
         credentials: 'same-origin',
       });
       if (resp.status === 200) {
+        const data = await resp.json().catch(() => ({}));
+        const token = data.api_token || data.session_token;
+        if (token) {
+          this.apiToken = token;
+          localStorage.setItem('signaldeck_token', token);
+          document.cookie = `session_token=${token}; path=/; SameSite=Strict`;
+        }
         this.loginRequired = false;
         this.loginPassword = '';
         this.authenticated = true;

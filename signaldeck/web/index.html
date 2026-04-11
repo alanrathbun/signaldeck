@@ -1016,6 +1016,16 @@
     </div>
   </div>
 
+<!--
+  Two login overlays exist in parallel:
+  - The pre-existing one above (x-show="!authenticated && authRequired") handles
+    INITIAL page-load auth via checkAuth() and the login() method.
+  - This one (x-show="loginRequired") handles MID-SESSION 401s via apiFetch's
+    401 branch, stashing the failed request in _retryAfterLogin for replay
+    after successful sign-in. Uses submitLogin() (raw fetch, not apiFetch,
+    to avoid recursion). Eventually the two should be unified, but the split
+    lets this task land without refactoring the existing auth flow.
+-->
 <!-- Login overlay (shown on 401) -->
 <div x-show="loginRequired" x-cloak
      style="position:fixed;inset:0;background:rgba(0,0,0,0.8);
@@ -1058,7 +1068,7 @@
                  border-radius:var(--radius-sm);font-size:1.1rem;word-break:break-all;
                  margin-bottom:12px;" x-text="firstRunPassword"></code>
     <button class="btn btn-sm" style="margin-bottom:16px;"
-            @click="navigator.clipboard.writeText(firstRunPassword); showToast('Copied', 'success')">
+            @click="navigator.clipboard.writeText(firstRunPassword).then(() => showToast('Copied', 'success')).catch(() => showToast('Copy failed — select the text above', 'error'))">
       Copy to clipboard
     </button>
     <p style="margin:0 0 16px 0;font-size:0.85rem;color:var(--text-secondary);">
