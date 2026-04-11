@@ -177,7 +177,7 @@ class UiPrefs(BaseModel):
     live_visible_cols: list[str] | None = None
 
 
-_DEFAULT_LIVE_COLS = ["frequency", "modulation", "protocol", "hits", "last_seen", "activity_summary"]
+_DEFAULT_LIVE_COLS = ["frequency", "power", "modulation", "protocol", "signal_class", "rds", "hits", "last_seen"]
 
 
 class SettingsUpdate(BaseModel):
