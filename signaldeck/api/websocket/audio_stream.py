@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from typing import Any, Literal
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from signaldeck.api.websocket._auth import ws_authorized
@@ -8,7 +9,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # Per-client state: {"freq": float | None, "is_lan": bool, "remote_addr": str}
-_audio_clients: dict = {}
+_audio_clients: dict[Any, dict] = {}
 
 # Shared state for audio streaming from scanner
 _audio_request: dict = {"frequency_hz": None, "active": False, "modulation": None, "volume": None}
@@ -19,7 +20,7 @@ def get_audio_request() -> dict:
     return _audio_request
 
 
-def resolve_effective_audio_mode(configured_mode: str) -> str:
+def resolve_effective_audio_mode(configured_mode: str) -> Literal["gqrx", "pcm_stream"]:
     """Decide the effective audio mode from the configured mode + live subscribers.
 
     - configured_mode == "gqrx" → always "gqrx"
@@ -41,7 +42,6 @@ def resolve_effective_audio_mode(configured_mode: str) -> str:
 
 async def send_audio_chunk(frequency_hz: float, audio_bytes: bytes) -> None:
     """Send demodulated audio to subscribed WebSocket clients."""
-    global _audio_clients
     for ws, info in list(_audio_clients.items()):
         if not isinstance(info, dict):
             continue
@@ -55,7 +55,6 @@ async def send_audio_chunk(frequency_hz: float, audio_bytes: bytes) -> None:
 
 @router.websocket("/ws/audio")
 async def ws_audio(websocket: WebSocket):
-    global _audio_clients
     if not await ws_authorized(websocket):
         await websocket.close(code=1008)
         return
@@ -73,13 +72,16 @@ async def ws_audio(websocket: WebSocket):
                 freq = data.get("frequency_hz", 0)
                 modulation = data.get("modulation")
                 volume = data.get("volume")
-                # Classify this client's origin against the LAN allowlist so
-                # the audio-mode resolver can decide.
+                # Deferred imports: server.py imports audio_stream at startup;
+                # importing server at module level here would create a circular
+                # import. Same rationale for auth — it imports server._state.
                 from signaldeck.api.auth import DEFAULT_LAN_ALLOWLIST, is_lan_client
                 from signaldeck.api.server import _state
                 cfg = _state.get("config", {}) or {}
                 allowlist = cfg.get("auth", {}).get("lan_allowlist") or DEFAULT_LAN_ALLOWLIST
-                client_addr = websocket.client.host if websocket.client else ""
+                # Reuse the remote_addr captured at connect time (no TOCTOU risk —
+                # a WebSocket's client host doesn't change mid-connection).
+                client_addr = _audio_clients.get(websocket, {}).get("remote_addr", "")
                 _audio_clients[websocket] = {
                     "freq": freq,
                     "is_lan": is_lan_client(client_addr, allowlist),
