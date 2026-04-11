@@ -69,3 +69,12 @@ def test_default_allowlist_contents():
     assert "192.168.0.0/16" in DEFAULT_LAN_ALLOWLIST
     assert "fc00::/7" in DEFAULT_LAN_ALLOWLIST
     assert "100.64.0.0/10" in DEFAULT_LAN_ALLOWLIST  # Tailscale
+
+
+def test_is_lan_client_skips_malformed_allowlist_entries():
+    """A bad CIDR entry must not prevent matching on valid entries that follow."""
+    allowlist = ["not-a-cidr", "10.0.0.0/8"]
+    assert is_lan_client("10.1.2.3", allowlist) is True
+
+    allowlist_all_bad = ["not-a-cidr", "also-bad", "9999::/200"]
+    assert is_lan_client("10.1.2.3", allowlist_all_bad) is False

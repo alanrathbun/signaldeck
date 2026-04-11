@@ -1,10 +1,10 @@
+import ipaddress
 import logging
 import secrets
 from pathlib import Path
 
 import bcrypt
 import yaml
-import ipaddress
 
 logger = logging.getLogger(__name__)
 
