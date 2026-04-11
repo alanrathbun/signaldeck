@@ -75,9 +75,29 @@ async def scanner_stop():
 async def get_status():
     """Return system status for the Status page."""
     from signaldeck.api.websocket.live_signals import _clients as ws_clients
+    from signaldeck.api.websocket.audio_stream import (
+        _audio_clients,
+        resolve_effective_audio_mode,
+    )
     config = get_config()
+    scanner_cfg = config.get("scanner", {})
     db = get_db()
     db_stats = await db.get_stats()
+
+    # Audio mode status
+    configured_audio_mode = scanner_cfg.get("audio_mode", "auto")
+    effective_audio_mode = resolve_effective_audio_mode(configured_audio_mode)
+    subscriber_count = sum(
+        1 for info in _audio_clients.values()
+        if isinstance(info, dict) and info.get("freq") is not None
+    )
+    remote_subscriber_count = sum(
+        1 for info in _audio_clients.values()
+        if isinstance(info, dict)
+        and info.get("freq") is not None
+        and not info.get("is_lan", True)
+    )
+
     return {
         "scanner": _scanner_state,
         "device_status": config.get("_runtime_devices", {}),
@@ -85,6 +105,12 @@ async def get_status():
         "ws_clients": len(ws_clients),
         "session_log": config.get("_session_log_file"),
         "start_time": config.get("_start_time"),
+        "audio": {
+            "configured_mode": configured_audio_mode,
+            "effective_mode": effective_audio_mode,
+            "subscriber_count": subscriber_count,
+            "remote_subscriber_count": remote_subscriber_count,
+        },
     }
 
 
