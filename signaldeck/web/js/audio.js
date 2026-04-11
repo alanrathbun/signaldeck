@@ -55,21 +55,41 @@ class AudioPlayer {
 
     this.scriptNode.onaudioprocess = (e) => {
       const output = e.outputBuffer.getChannelData(0);
-      if (this.bufferQueue.length > 0) {
-        const chunk = this.bufferQueue.shift();
-        const len = Math.min(output.length, chunk.length);
-        for (let i = 0; i < len; i++) {
-          output[i] = chunk[i];
+      let outputPos = 0;
+
+      // Fill the output buffer by consuming as many chunks from the queue
+      // as needed. If a chunk is larger than the remaining output space,
+      // we keep the remainder at the front of the queue for the next
+      // callback. This is necessary because the server's chunk size
+      // (40 ms worth of audio, ~1920 samples at 48 kHz) is smaller than
+      // the ScriptProcessor's buffer (4096 samples ≈ 85 ms), so each
+      // callback needs ~2 chunks to fill a single output buffer. The
+      // previous version only consumed one chunk per callback and padded
+      // the remainder with silence, producing ~47% audio / ~53% silence —
+      // the "high-frequency chopping" the user heard.
+      while (outputPos < output.length && this.bufferQueue.length > 0) {
+        const chunk = this.bufferQueue[0];
+        const remaining = output.length - outputPos;
+        const take = Math.min(remaining, chunk.length);
+
+        for (let i = 0; i < take; i++) {
+          output[outputPos + i] = chunk[i];
         }
-        // Fill remainder with silence
-        for (let i = len; i < output.length; i++) {
-          output[i] = 0;
+        outputPos += take;
+
+        if (take === chunk.length) {
+          // Consumed the entire chunk — remove it from the queue.
+          this.bufferQueue.shift();
+        } else {
+          // Partial consumption — replace the head with the remainder so
+          // the next callback picks up where we left off.
+          this.bufferQueue[0] = chunk.subarray(take);
         }
-      } else {
-        // Silence
-        for (let i = 0; i < output.length; i++) {
-          output[i] = 0;
-        }
+      }
+
+      // Fill any still-empty output with silence (queue ran dry).
+      for (let i = outputPos; i < output.length; i++) {
+        output[i] = 0;
       }
 
       // Update peak level from analyser
