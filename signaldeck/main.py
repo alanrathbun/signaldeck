@@ -723,6 +723,10 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                     audio_req = audio_request_fn()
 
                     # Apply audio mode flip (mute gqrx when streaming PCM to browser).
+                    # AudioModeController is the single writer for AF gain in pcm_stream mode.
+                    # The slider-change and post-tune blocks below skip set_audio_gain when
+                    # effective == "pcm_stream" to avoid un-muting gqrx mid-tick. Do NOT remove
+                    # those guards without re-routing volume changes through the controller.
                     if audio_mode_ctrl is not None:
                         from signaldeck.api.websocket.audio_stream import resolve_effective_audio_mode
                         scanner_cfg = cfg.get("scanner", {})
@@ -731,14 +735,19 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                         vol_raw = audio_req.get("volume")
                         user_volume_db = _slider_to_gqrx_af_gain(vol_raw)
                         await audio_mode_ctrl.apply_effective_mode(effective, user_volume_db)
+                    else:
+                        effective = "gqrx"
 
                     # Handle volume changes (0.0-1.0 -> -60 dB to 0 dB AF gain)
                     vol = audio_req.get("volume")
                     if vol is not None and vol != _last_volume:
                         af_gain = _slider_to_gqrx_af_gain(vol)
-                        await gqrx_device._client.set_audio_gain(af_gain)
+                        # In pcm_stream mode the controller owns AF gain — skip the direct write,
+                        # otherwise we'd un-mute gqrx on every slider move.
+                        if effective != "pcm_stream":
+                            await gqrx_device._client.set_audio_gain(af_gain)
+                            logger.debug("gqrx: volume %.0f%% (AF gain %.1f dB)", vol * 100, af_gain)
                         _last_volume = vol
-                        logger.debug("gqrx: volume %.0f%% (AF gain %.1f dB)", vol * 100, af_gain)
 
                     if audio_req.get("active") and audio_req.get("frequency_hz"):
                         freq_hz = audio_req["frequency_hz"]
@@ -747,10 +756,12 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                             mode = _gqrx_mode_for(audio_req.get("modulation"), freq_hz)
                             await gqrx_device.set_mode(mode)
                             await gqrx_device.tune(freq_hz)
-                            # Ensure DSP is on, then apply the current slider value.
+                            # Ensure DSP is on, then restore the slider volume — unless the
+                            # controller owns AF gain in pcm_stream mode (it keeps gqrx muted).
                             await gqrx_device._client.set_dsp(True)
-                            af_gain = _slider_to_gqrx_af_gain(vol)
-                            await gqrx_device._client.set_audio_gain(af_gain)
+                            if effective != "pcm_stream":
+                                af_gain = _slider_to_gqrx_af_gain(vol)
+                                await gqrx_device._client.set_audio_gain(af_gain)
                             _last_volume = vol
                             _gqrx_tuned_freq = freq_hz
                             logger.info("gqrx: tuned to %.3f MHz (mode=%s)", freq_hz / 1e6, mode)
