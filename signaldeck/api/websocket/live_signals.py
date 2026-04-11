@@ -4,6 +4,8 @@ import time
 from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from signaldeck.api.websocket._auth import ws_authorized
+
 logger = logging.getLogger(__name__)
 router = APIRouter()
 _clients: set[WebSocket] = set()
@@ -74,6 +76,9 @@ async def broadcast(message: dict):
 
 @router.websocket("/ws/signals")
 async def ws_signals(websocket: WebSocket):
+    if not await ws_authorized(websocket):
+        await websocket.close(code=1008)
+        return
     await websocket.accept()
     _clients.add(websocket)
     logger.debug("WebSocket client connected (%d total)", len(_clients))

@@ -2,6 +2,8 @@ import asyncio
 import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from signaldeck.api.websocket._auth import ws_authorized
+
 logger = logging.getLogger(__name__)
 router = APIRouter()
 _audio_clients: dict[WebSocket, float | None] = {}
@@ -29,6 +31,9 @@ async def send_audio_chunk(frequency_hz: float, audio_bytes: bytes) -> None:
 @router.websocket("/ws/audio")
 async def ws_audio(websocket: WebSocket):
     global _audio_clients
+    if not await ws_authorized(websocket):
+        await websocket.close(code=1008)
+        return
     await websocket.accept()
     _audio_clients[websocket] = None
     logger.debug("Audio WebSocket client connected")
