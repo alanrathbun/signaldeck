@@ -1,4 +1,5 @@
 """Tests for AuthManager's remember-me token methods."""
+import asyncio
 import hashlib
 
 import pytest
@@ -65,7 +66,6 @@ async def test_verify_remember_token_updates_last_used(mgr, db):
     h = hashlib.sha256(raw.encode()).hexdigest()
 
     row_before = await db.get_remember_token_by_hash(h)
-    import asyncio
     await asyncio.sleep(0.01)
     await mgr.verify_remember_token(db, raw)
     row_after = await db.get_remember_token_by_hash(h)
@@ -78,7 +78,6 @@ async def test_verify_remember_token_does_not_update_on_failure(mgr, db):
     real_h = hashlib.sha256(real_raw.encode()).hexdigest()
     before = (await db.get_remember_token_by_hash(real_h))["last_used_at"]
 
-    import asyncio
     await asyncio.sleep(0.01)
     # Verify a fake token — should not touch any row
     await mgr.verify_remember_token(db, "not-a-real-token")
@@ -118,3 +117,25 @@ async def test_raw_token_never_in_database(mgr, db):
         # The hash is 64-char hex
         assert len(row[0]) == 64
         int(row[0], 16)  # Must be valid hex
+
+
+async def test_verify_remember_token_returns_false_on_db_error(mgr):
+    """A DB error during verify must fail-closed (return False)."""
+    class BrokenDB:
+        async def get_remember_token_by_hash(self, _):
+            raise RuntimeError("simulated database failure")
+
+    result = await mgr.verify_remember_token(BrokenDB(), "anytoken")
+    assert result is False
+
+
+async def test_label_auto_generation_opera(mgr, db):
+    raw = await mgr.create_remember_token(
+        db,
+        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                   "AppleWebKit/537.36 (KHTML, like Gecko) "
+                   "Chrome/109.0.0.0 Safari/537.36 OPR/95.0.0.0",
+        ip="1.1.1.1",
+    )
+    row = await db.get_remember_token_by_hash(hashlib.sha256(raw.encode()).hexdigest())
+    assert row["label"] == "Windows Opera"

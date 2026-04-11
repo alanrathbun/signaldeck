@@ -177,9 +177,11 @@ class AuthManager:
         # Browser
         if "Edg/" in ua:
             browser = "Edge"
+        elif "OPR/" in ua or "Opera/" in ua:
+            browser = "Opera"
         elif "Firefox/" in ua:
             browser = "Firefox"
-        elif "Chrome/" in ua and "Chromium" not in ua:
+        elif "Chrome/" in ua and "Chromium" not in ua and "OPR/" not in ua:
             browser = "Chrome"
         elif "Safari/" in ua:
             browser = "Safari"
