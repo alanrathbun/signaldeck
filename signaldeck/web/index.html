@@ -139,6 +139,14 @@
           <div class="vu-meter" x-show="audioPlaying">
             <div class="vu-bar" :style="'width:' + (audioLevel * 100) + '%'"></div>
           </div>
+          <div x-show="audioPlaying && audioStatus.effective_mode === 'gqrx' && !_clientLooksLocal()"
+               x-cloak
+               style="padding:8px 12px;background:#4a3b15;color:#f0c860;
+                      border-radius:var(--radius-sm);margin:8px 0;font-size:0.85rem;">
+            Audio mode is set to <strong>Local gqrx</strong> — this browser will not
+            receive audio. <a href="#" @click.prevent="audioMode='auto'; saveAudioMode()"
+                              style="color:#f0c860;text-decoration:underline;">Switch to Automatic</a>
+          </div>
         </div>
       </div>
 
@@ -829,6 +837,51 @@
           </div>
         </div>
 
+        <!-- Audio Output card -->
+        <div class="card" style="margin-top:16px;">
+          <h3 style="margin-top:0;">Audio Output</h3>
+          <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;">
+            <label style="display:flex;align-items:flex-start;gap:8px;">
+              <input type="radio" value="auto" x-model="audioMode" @change="saveAudioMode()">
+              <span>
+                <strong>Automatic</strong>
+                <div style="font-size:0.8rem;color:var(--text-secondary);">
+                  Local gqrx when only LAN clients are listening, browser stream
+                  when any remote client is connected. Default.
+                </div>
+              </span>
+            </label>
+            <label style="display:flex;align-items:flex-start;gap:8px;">
+              <input type="radio" value="gqrx" x-model="audioMode" @change="saveAudioMode()">
+              <span>
+                <strong>Local gqrx</strong>
+                <div style="font-size:0.8rem;color:var(--text-secondary);">
+                  Always play through the server's speakers via gqrx.
+                  Remote browsers will not receive audio.
+                </div>
+              </span>
+            </label>
+            <label style="display:flex;align-items:flex-start;gap:8px;">
+              <input type="radio" value="pcm_stream" x-model="audioMode" @change="saveAudioMode()">
+              <span>
+                <strong>Browser stream</strong>
+                <div style="font-size:0.8rem;color:var(--text-secondary);">
+                  Always stream PCM to connected browsers. gqrx stays tuned but
+                  muted.
+                </div>
+              </span>
+            </label>
+          </div>
+          <div style="padding:12px;background:var(--bg-primary);border-radius:var(--radius-sm);">
+            <strong>Currently active:</strong>
+            <span x-text="audioStatus.effective_mode === 'pcm_stream' ? 'Browser stream' : 'Local gqrx'"></span>
+            <span style="color:var(--text-secondary);" x-show="audioStatus.subscriber_count > 0">
+              — <span x-text="audioStatus.subscriber_count"></span> subscriber(s),
+              <span x-text="audioStatus.remote_subscriber_count"></span> remote
+            </span>
+          </div>
+        </div>
+
         <!-- Logging -->
         <div class="card">
           <div class="card-header">
@@ -937,51 +990,6 @@
               </tr>
             </tbody>
           </table>
-        </div>
-
-        <!-- Audio Output card -->
-        <div class="card" style="margin-top:16px;">
-          <h3 style="margin-top:0;">Audio Output</h3>
-          <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;">
-            <label style="display:flex;align-items:flex-start;gap:8px;">
-              <input type="radio" value="auto" x-model="audioMode" @change="saveAudioMode()">
-              <span>
-                <strong>Automatic</strong>
-                <div style="font-size:0.8rem;color:var(--text-secondary);">
-                  Local gqrx when only LAN clients are listening, browser stream
-                  when any remote client is connected. Default.
-                </div>
-              </span>
-            </label>
-            <label style="display:flex;align-items:flex-start;gap:8px;">
-              <input type="radio" value="gqrx" x-model="audioMode" @change="saveAudioMode()">
-              <span>
-                <strong>Local gqrx</strong>
-                <div style="font-size:0.8rem;color:var(--text-secondary);">
-                  Always play through the server's speakers via gqrx.
-                  Remote browsers will not receive audio.
-                </div>
-              </span>
-            </label>
-            <label style="display:flex;align-items:flex-start;gap:8px;">
-              <input type="radio" value="pcm_stream" x-model="audioMode" @change="saveAudioMode()">
-              <span>
-                <strong>Browser stream</strong>
-                <div style="font-size:0.8rem;color:var(--text-secondary);">
-                  Always stream PCM to connected browsers. gqrx stays tuned but
-                  muted.
-                </div>
-              </span>
-            </label>
-          </div>
-          <div style="padding:12px;background:var(--bg-primary);border-radius:var(--radius-sm);">
-            <strong>Currently active:</strong>
-            <span x-text="audioStatus.effective_mode === 'pcm_stream' ? 'Browser stream' : 'Local gqrx'"></span>
-            <span style="color:var(--text-secondary);" x-show="audioStatus.subscriber_count > 0">
-              — <span x-text="audioStatus.subscriber_count"></span> subscriber(s),
-              <span x-text="audioStatus.remote_subscriber_count"></span> remote
-            </span>
-          </div>
         </div>
 
         <!-- Data Management -->

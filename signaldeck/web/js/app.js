@@ -654,8 +654,23 @@ function dashboard() {
         body: JSON.stringify({ audio_mode: this.audioMode }),
       });
       if (resp) {
-        this.showToast(`Audio mode: ${this.audioMode}`, 'success');
+        const labels = { auto: 'Automatic', gqrx: 'Local gqrx', pcm_stream: 'Browser stream' };
+        this.showToast(`Audio mode: ${labels[this.audioMode] || this.audioMode}`, 'success');
       }
+    },
+
+    _clientLooksLocal() {
+      // Best-effort: if the browser is accessing via a LAN-ish hostname,
+      // we're probably not a remote client and don't need the banner.
+      const host = window.location.hostname;
+      if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return true;
+      // IPv4 private ranges
+      if (/^10\./.test(host)) return true;
+      if (/^192\.168\./.test(host)) return true;
+      if (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host)) return true;
+      // Tailscale CGNAT
+      if (/^100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\./.test(host)) return true;
+      return false;
     },
 
     addScanRange() {
