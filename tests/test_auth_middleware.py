@@ -144,10 +144,10 @@ async def test_remote_client_with_valid_remember_cookie_passes(app):
         raw = await mgr.create_remember_token(db, user_agent="test", ip="203.0.113.42")
 
         async with await _client(app) as c:
+            c.cookies.set("sd_remember", raw)
             resp = await c.get(
                 "/api/signals",
                 headers={"x-test-client-ip": "203.0.113.42"},
-                cookies={"sd_remember": raw},
             )
             assert resp.status_code == 200
 
@@ -155,10 +155,10 @@ async def test_remote_client_with_valid_remember_cookie_passes(app):
 async def test_remote_client_with_invalid_cookie_gets_401(app):
     async with app.router.lifespan_context(app):
         async with await _client(app) as c:
+            c.cookies.set("sd_remember", "fake-token")
             resp = await c.get(
                 "/api/signals",
                 headers={"x-test-client-ip": "203.0.113.42"},
-                cookies={"sd_remember": "fake-token"},
             )
             assert resp.status_code == 401
 
@@ -176,10 +176,10 @@ async def test_remote_client_with_revoked_cookie_gets_401(app):
         await db.revoke_remember_token(row["id"])
 
         async with await _client(app) as c:
+            c.cookies.set("sd_remember", raw)
             resp = await c.get(
                 "/api/signals",
                 headers={"x-test-client-ip": "203.0.113.42"},
-                cookies={"sd_remember": raw},
             )
             assert resp.status_code == 401
 
@@ -202,6 +202,9 @@ async def test_auth_login_path_is_public(app):
             assert resp.status_code == 401
             # Route-level 401 uses "Invalid credentials", middleware uses
             # "Not authenticated". We want the route's message here.
+            # "Invalid credentials" is the route handler's own 401 message (vs the
+            # middleware's "Not authenticated"). Matching it here proves the middleware
+            # let the request through to the route rather than short-circuiting itself.
             assert "Invalid credentials" in resp.text
 
 

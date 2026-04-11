@@ -22,11 +22,11 @@ def get_auth_manager():
     return _state.get("auth")
 
 
-_PUBLIC_PATHS = {
+_PUBLIC_PATHS: frozenset[str] = frozenset({
     "/api/health",
     "/api/auth/login",
     "/api/auth/toggle",
-}
+})
 
 
 class AuthMiddleware(BaseHTTPMiddleware):

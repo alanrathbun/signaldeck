@@ -53,6 +53,9 @@ async def test_health_always_accessible(app_with_auth):
 async def test_api_requires_token_when_auth_enabled(app_with_auth):
     """API endpoints return 401 without auth token (from a remote IP)."""
     # Simulate a remote (non-LAN) client so the LAN bypass doesn't fire.
+    # _RemoteIPMiddleware must be added AFTER create_app so Starlette runs it
+    # outermost (LIFO order) — it rewrites request.scope["client"] before
+    # AuthMiddleware reads it, forcing a non-LAN IP for this test.
     app_with_auth.add_middleware(_RemoteIPMiddleware)
     async with app_with_auth.router.lifespan_context(app_with_auth):
         transport = ASGITransport(app=app_with_auth)
