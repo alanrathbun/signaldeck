@@ -88,6 +88,18 @@ CREATE TABLE IF NOT EXISTS decoder_results (
     timestamp TEXT NOT NULL,
     FOREIGN KEY (activity_id) REFERENCES activity_log(id)
 );
+
+CREATE TABLE IF NOT EXISTS remember_tokens (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_hash     TEXT NOT NULL UNIQUE,
+    created_at     TEXT NOT NULL,
+    last_used_at   TEXT NOT NULL,
+    user_agent     TEXT,
+    ip_first_seen  TEXT,
+    label          TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_remember_tokens_hash ON remember_tokens(token_hash);
 """
 
 
@@ -285,6 +297,75 @@ class Database:
 
     async def delete_bookmark(self, bookmark_id: int) -> bool:
         cursor = await self._conn.execute("DELETE FROM bookmarks WHERE id = ?", (bookmark_id,))
+        await self._conn.commit()
+        return cursor.rowcount > 0
+
+    # ---- Remember-me tokens (long-lived session cookies) ----
+
+    async def insert_remember_token(
+        self,
+        *,
+        token_hash: str,
+        user_agent: str | None,
+        ip_first_seen: str | None,
+        label: str | None,
+    ) -> int:
+        """Insert a new remember-me token row. Returns the new row id."""
+        now = datetime.now(timezone.utc).isoformat()
+        cursor = await self._conn.execute(
+            """INSERT INTO remember_tokens
+               (token_hash, created_at, last_used_at, user_agent, ip_first_seen, label)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (token_hash, now, now, user_agent, ip_first_seen, label),
+        )
+        await self._conn.commit()
+        return cursor.lastrowid
+
+    async def get_remember_token_by_hash(self, token_hash: str) -> dict | None:
+        """Return the row dict for a given hash, or None if not found."""
+        cursor = await self._conn.execute(
+            "SELECT * FROM remember_tokens WHERE token_hash = ?",
+            (token_hash,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
+    async def update_remember_token_last_used(self, token_hash: str) -> None:
+        """Touch last_used_at for an existing token. No-op if missing."""
+        now = datetime.now(timezone.utc).isoformat()
+        await self._conn.execute(
+            "UPDATE remember_tokens SET last_used_at = ? WHERE token_hash = ?",
+            (now, token_hash),
+        )
+        await self._conn.commit()
+
+    async def list_remember_tokens(self) -> list[dict]:
+        """Return all rows MINUS token_hash (never exposed to callers)."""
+        cursor = await self._conn.execute(
+            """SELECT id, created_at, last_used_at, user_agent, ip_first_seen, label
+               FROM remember_tokens
+               ORDER BY last_used_at DESC""",
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def rename_remember_token(self, token_id: int, label: str) -> bool:
+        """Update a row's label. Returns True on success, False if missing."""
+        cursor = await self._conn.execute(
+            "UPDATE remember_tokens SET label = ? WHERE id = ?",
+            (label, token_id),
+        )
+        await self._conn.commit()
+        return cursor.rowcount > 0
+
+    async def revoke_remember_token(self, token_id: int) -> bool:
+        """Delete a row. Returns True on success, False if missing."""
+        cursor = await self._conn.execute(
+            "DELETE FROM remember_tokens WHERE id = ?",
+            (token_id,),
+        )
         await self._conn.commit()
         return cursor.rowcount > 0
 
