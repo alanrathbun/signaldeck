@@ -1,3 +1,4 @@
+import hashlib
 import ipaddress
 import logging
 import secrets
@@ -138,3 +139,100 @@ class AuthManager:
     def create_session_token(self) -> str:
         """Create a session token for web login."""
         return secrets.token_urlsafe(32)
+
+    # ---- Remember-me tokens (database-backed) ----
+
+    @staticmethod
+    def _hash_token(raw: str) -> str:
+        """Return the SHA-256 hex digest of a raw token."""
+        return hashlib.sha256(raw.encode()).hexdigest()
+
+    @staticmethod
+    def _auto_label_from_ua(user_agent: str | None) -> str:
+        """Derive a short human-readable label from a User-Agent string.
+
+        Examples:
+            iPhone Safari, iPad Safari, Android Chrome, Mac Safari,
+            Mac Chrome, Windows Firefox. Falls back to the first 40 chars
+            of the UA if no known pattern matches.
+        """
+        if not user_agent:
+            return "Unknown device"
+        ua = user_agent
+        # Device
+        if "iPhone" in ua:
+            device = "iPhone"
+        elif "iPad" in ua:
+            device = "iPad"
+        elif "Android" in ua:
+            device = "Android"
+        elif "Macintosh" in ua or "Mac OS X" in ua:
+            device = "Mac"
+        elif "Windows" in ua:
+            device = "Windows"
+        elif "Linux" in ua:
+            device = "Linux"
+        else:
+            device = None
+        # Browser
+        if "Edg/" in ua:
+            browser = "Edge"
+        elif "Firefox/" in ua:
+            browser = "Firefox"
+        elif "Chrome/" in ua and "Chromium" not in ua:
+            browser = "Chrome"
+        elif "Safari/" in ua:
+            browser = "Safari"
+        else:
+            browser = None
+        if device and browser:
+            return f"{device} {browser}"
+        if device:
+            return device
+        if browser:
+            return browser
+        return ua[:40]
+
+    async def create_remember_token(
+        self,
+        db,
+        *,
+        user_agent: str | None,
+        ip: str | None,
+        label: str | None = None,
+    ) -> str:
+        """Generate a new random token, persist its hash, return the raw token.
+
+        The raw value is the cookie the browser will store. The database
+        only ever sees the SHA-256 hash.
+        """
+        raw = secrets.token_urlsafe(32)  # 256 bits of entropy
+        token_hash = self._hash_token(raw)
+        chosen_label = label if label is not None else self._auto_label_from_ua(user_agent)
+        await db.insert_remember_token(
+            token_hash=token_hash,
+            user_agent=user_agent,
+            ip_first_seen=ip,
+            label=chosen_label,
+        )
+        return raw
+
+    async def verify_remember_token(self, db, raw_token: str) -> bool:
+        """Return True iff the token's hash matches a remember_tokens row.
+
+        On success, touches the row's last_used_at. On any failure —
+        missing token, unknown hash, or database error — returns False
+        and performs no writes.
+        """
+        if not raw_token:
+            return False
+        try:
+            token_hash = self._hash_token(raw_token)
+            row = await db.get_remember_token_by_hash(token_hash)
+            if row is None:
+                return False
+            await db.update_remember_token_last_used(token_hash)
+            return True
+        except Exception as e:
+            logger.warning("verify_remember_token error: %s", e)
+            return False
