@@ -324,7 +324,8 @@ class Database:
     async def get_remember_token_by_hash(self, token_hash: str) -> dict | None:
         """Return the row dict for a given hash, or None if not found."""
         cursor = await self._conn.execute(
-            "SELECT * FROM remember_tokens WHERE token_hash = ?",
+            """SELECT id, token_hash, created_at, last_used_at, user_agent, ip_first_seen, label
+               FROM remember_tokens WHERE token_hash = ?""",
             (token_hash,),
         )
         row = await cursor.fetchone()

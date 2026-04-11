@@ -1,4 +1,7 @@
 """Tests for the remember_tokens SQLite layer in Database."""
+import asyncio
+
+import aiosqlite
 import pytest
 
 from signaldeck.storage.database import Database
@@ -51,11 +54,10 @@ async def test_update_remember_token_last_used(db):
         label="test",
     )
     row_before = await db.get_remember_token_by_hash("hash1")
-    import asyncio
     await asyncio.sleep(0.01)  # Ensure timestamp would differ
     await db.update_remember_token_last_used("hash1")
     row_after = await db.get_remember_token_by_hash("hash1")
-    assert row_after["last_used_at"] >= row_before["last_used_at"]
+    assert row_after["last_used_at"] > row_before["last_used_at"]
 
 
 async def test_list_remember_tokens_returns_all_without_hash(db):
@@ -107,7 +109,7 @@ async def test_token_hash_unique_constraint(db):
     await db.insert_remember_token(
         token_hash="dup", user_agent="a", ip_first_seen="1.1.1.1", label="first"
     )
-    with pytest.raises(Exception):
+    with pytest.raises(aiosqlite.IntegrityError):
         await db.insert_remember_token(
             token_hash="dup", user_agent="b", ip_first_seen="2.2.2.2", label="second"
         )
