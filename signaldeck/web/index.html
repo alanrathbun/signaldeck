@@ -1174,5 +1174,106 @@
   </div>
 </div>
 
+<!-- Bookmark edit/create modal — powers three entry points:
+     (1) Edit button on the Bookmarks table
+     (2) Bookmark button on a Live Signals row for a new signal
+     (3) Bookmark button on a Live Signals row for an already-bookmarked
+         signal (opens in Edit mode on the existing bookmark).
+     See docs/superpowers/specs/2026-04-11-bookmark-edit-feature-design.md -->
+<div x-show="editingBookmark" x-cloak
+     style="position:fixed;inset:0;background:rgba(0,0,0,0.8);
+            display:flex;align-items:center;justify-content:center;z-index:2000;">
+  <div style="background:var(--bg-secondary);padding:32px;border-radius:var(--radius);
+              max-width:520px;width:90%;max-height:90vh;overflow-y:auto;
+              box-shadow:0 20px 60px rgba(0,0,0,0.6);">
+    <h2 style="margin:0 0 16px 0;"
+        x-text="editModalMode === 'edit' ? 'Edit Bookmark' : 'New Bookmark'"></h2>
+
+    <template x-if="editingBookmark">
+      <form @submit.prevent="saveBookmarkEdit()">
+        <!-- Frequency — read-only in edit mode and in create-from-signal mode -->
+        <div style="margin-bottom:12px;">
+          <label>Frequency (MHz)</label>
+          <input type="number" class="form-input" step="0.001"
+                 :value="editingBookmark.frequency_hz ? (editingBookmark.frequency_hz / 1e6).toFixed(4) : ''"
+                 @input="editingBookmark.frequency_hz = parseFloat($event.target.value) * 1e6"
+                 :readonly="editModalMode === 'edit' || editModalSignal !== null"
+                 :style="(editModalMode === 'edit' || editModalSignal !== null) ? 'opacity:0.6;' : ''">
+        </div>
+
+        <div style="margin-bottom:12px;">
+          <label>Label *</label>
+          <input type="text" class="form-input" x-model="editingBookmark.label" required>
+        </div>
+
+        <div style="margin-bottom:12px;">
+          <label>Modulation</label>
+          <select class="form-select" x-model="editingBookmark.modulation">
+            <option value="">--</option>
+            <option value="FM">FM</option>
+            <option value="NFM">NFM</option>
+            <option value="AM">AM</option>
+            <option value="USB">USB</option>
+            <option value="LSB">LSB</option>
+            <option value="CW">CW</option>
+            <option value="DIGITAL">Digital</option>
+            <option value="P25">P25</option>
+            <option value="DMR">DMR</option>
+            <option value="ADSB">ADS-B</option>
+          </select>
+        </div>
+
+        <div style="margin-bottom:12px;">
+          <label>Decoder</label>
+          <select class="form-select" x-model="editingBookmark.decoder">
+            <option :value="null">None</option>
+            <option value="adsb">ADS-B</option>
+            <option value="acars">ACARS</option>
+            <option value="aprs">APRS</option>
+            <option value="pocsag">POCSAG</option>
+            <option value="noaa_apt">NOAA APT</option>
+            <option value="ais">AIS</option>
+            <option value="broadcast_fm">Broadcast FM</option>
+          </select>
+        </div>
+
+        <div style="margin-bottom:12px;">
+          <label>Priority (1–5)</label>
+          <input type="number" class="form-input" min="1" max="5"
+                 x-model.number="editingBookmark.priority">
+        </div>
+
+        <div style="margin-bottom:12px;">
+          <label style="display:flex;align-items:center;gap:8px;">
+            <input type="checkbox" x-model="editingBookmark.camp_on_active">
+            <span>Camp on active
+              <span style="color:var(--text-secondary);font-size:0.8rem;">
+                (planned: lock onto this frequency during bookmark scans)
+              </span>
+            </span>
+          </label>
+        </div>
+
+        <div style="margin-bottom:12px;">
+          <label>Notes</label>
+          <textarea class="form-input" rows="3" x-model="editingBookmark.notes"
+                    placeholder="Optional — shown in the bookmarks table under the label"></textarea>
+        </div>
+
+        <div x-show="editModalError" x-cloak
+             style="color:var(--red);font-size:0.85rem;margin-bottom:12px;"
+             x-text="editModalError"></div>
+
+        <div style="display:flex;gap:8px;justify-content:flex-end;">
+          <button type="button" class="btn" @click="cancelBookmarkEdit()">Cancel</button>
+          <button type="submit" class="btn btn-primary"
+                  :disabled="savingBookmark"
+                  x-text="savingBookmark ? 'Saving...' : (editModalMode === 'edit' ? 'Save' : 'Add bookmark')"></button>
+        </div>
+      </form>
+    </template>
+  </div>
+</div>
+
 </body>
 </html>
