@@ -159,6 +159,9 @@ async def get_settings(refresh_devices: bool = Query(default=False)):
         "logging": {
             "level": config.get("logging", {}).get("level", "INFO"),
         },
+        "ui": config.get("ui", {
+            "live_visible_cols": _DEFAULT_LIVE_COLS,
+        }),
     }
 
 
@@ -168,6 +171,13 @@ class ScanRangeUpdate(BaseModel):
     end_mhz: float
     step_khz: float | None = None
     priority: int | None = None
+
+
+class UiPrefs(BaseModel):
+    live_visible_cols: list[str] | None = None
+
+
+_DEFAULT_LIVE_COLS = ["frequency", "modulation", "protocol", "hits", "last_seen", "activity_summary"]
 
 
 class SettingsUpdate(BaseModel):
@@ -188,6 +198,8 @@ class SettingsUpdate(BaseModel):
     tuner_device: str | None = None
     # Audio mode
     audio_mode: Literal["auto", "gqrx", "pcm_stream"] | None = None
+    # UI preferences
+    ui: UiPrefs | None = None
 
 
 @router.put("/settings")
@@ -274,6 +286,10 @@ async def update_settings(data: SettingsUpdate):
         config["scanner"]["audio_mode"] = data.audio_mode
         changed.append(f"audio_mode={data.audio_mode}")
 
+    if data.ui is not None and data.ui.live_visible_cols is not None:
+        config.setdefault("ui", {})["live_visible_cols"] = list(data.ui.live_visible_cols)
+        changed.append("ui.live_visible_cols")
+
     # Persist settings to user config file so they survive restarts
     if changed:
         _persist_user_config(config)
@@ -315,6 +331,12 @@ def _persist_user_config(config: dict) -> None:
         },
         "logging": {
             "level": config.get("logging", {}).get("level", "INFO"),
+        },
+        "ui": {
+            "live_visible_cols": config.get("ui", {}).get(
+                "live_visible_cols",
+                _DEFAULT_LIVE_COLS,
+            ),
         },
     }
     # Remove None values from devices

@@ -535,6 +535,9 @@ function dashboard() {
       if (settings.logging) {
         this.editSettings.log_level = settings.logging.level || 'INFO';
       }
+      if (settings.ui && Array.isArray(settings.ui.live_visible_cols)) {
+        this.liveVisibleCols = [...settings.ui.live_visible_cols];
+      }
     },
 
     async fetchSettings(refreshDevices = false) {
@@ -1053,6 +1056,21 @@ function dashboard() {
         this.liveVisibleCols.push(key);
       }
       localStorage.setItem('signaldeck_live_cols', JSON.stringify(this.liveVisibleCols));
+      this._queueSaveColumns();
+    },
+
+    _saveColsTimer: null,
+
+    _queueSaveColumns() {
+      if (this._saveColsTimer) clearTimeout(this._saveColsTimer);
+      this._saveColsTimer = setTimeout(() => {
+        this.apiFetch('/api/settings', {
+          method: 'PUT',
+          body: JSON.stringify({
+            ui: { live_visible_cols: this.liveVisibleCols },
+          }),
+        });
+      }, 500);
     },
 
     clearLiveFilters() {
