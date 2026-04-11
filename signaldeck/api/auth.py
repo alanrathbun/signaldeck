@@ -4,6 +4,7 @@ from pathlib import Path
 
 import bcrypt
 import yaml
+import ipaddress
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,40 @@ def verify_password(password: str, hashed: str) -> bool:
 def generate_api_token() -> str:
     """Generate a cryptographically secure API token."""
     return secrets.token_urlsafe(48)
+
+
+DEFAULT_LAN_ALLOWLIST: list[str] = [
+    "127.0.0.0/8",      # IPv4 loopback
+    "::1/128",          # IPv6 loopback
+    "10.0.0.0/8",       # RFC1918 private
+    "172.16.0.0/12",    # RFC1918 private
+    "192.168.0.0/16",   # RFC1918 private (typical home router)
+    "fc00::/7",         # IPv6 unique-local addresses
+    "100.64.0.0/10",    # Tailscale CGNAT
+]
+
+
+def is_lan_client(client_ip: str | None, allowlist: list[str]) -> bool:
+    """Return True if client_ip is inside any CIDR range in the allowlist.
+
+    Returns False for None, empty strings, malformed addresses, or IPs
+    outside every range. Malformed CIDR entries in the allowlist are
+    silently skipped (not an error) to keep a single bad config entry
+    from locking the operator out of their own box.
+    """
+    if not client_ip:
+        return False
+    try:
+        ip = ipaddress.ip_address(client_ip)
+    except ValueError:
+        return False
+    for cidr in allowlist:
+        try:
+            if ip in ipaddress.ip_network(cidr, strict=False):
+                return True
+        except ValueError:
+            continue
+    return False
 
 
 class AuthManager:
