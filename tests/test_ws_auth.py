@@ -47,7 +47,7 @@ def test_ws_audio_with_valid_cookie_accepts(tmp_path):
         mgr = get_auth_manager()
         db = get_db()
         import asyncio
-        raw = asyncio.get_event_loop().run_until_complete(
+        raw = asyncio.run(
             mgr.create_remember_token(db, user_agent="test", ip="1.1.1.1")
         )
 
