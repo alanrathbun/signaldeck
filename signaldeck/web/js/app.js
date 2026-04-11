@@ -145,6 +145,16 @@ function dashboard() {
     currentApiToken: null,
     changePass: { current: '', newPass: '', confirm: '' },
 
+    // ---- Login overlay state ----
+    loginRequired: false,
+    loginUsername: 'admin',
+    loginPassword: '',
+    _retryAfterLogin: null,
+
+    // ---- First-run password modal state ----
+    firstRunPassword: null,
+    firstRunAcknowledged: false,
+
     // --- Logs ---
     logFiles: [],
     currentLog: { name: '', content: '' },
@@ -446,6 +456,34 @@ function dashboard() {
       }
     },
 
+    async submitLogin() {
+      this.loginError = '';
+      const resp = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: this.loginUsername,
+          password: this.loginPassword,
+        }),
+        credentials: 'same-origin',
+      });
+      if (resp.status === 200) {
+        this.loginRequired = false;
+        this.loginPassword = '';
+        this.authenticated = true;
+        this.authRequired = false;
+        this.showToast('Signed in', 'success');
+        if (this._retryAfterLogin) {
+          const { url, opts } = this._retryAfterLogin;
+          this._retryAfterLogin = null;
+          return await this.apiFetch(url, opts);
+        }
+      } else {
+        const body = await resp.json().catch(() => ({}));
+        this.loginError = body.detail || 'Invalid username or password';
+      }
+    },
+
     logout() {
       this.apiToken = null;
       localStorage.removeItem('signaldeck_token');
@@ -467,6 +505,8 @@ function dashboard() {
           ...options,
         });
         if (resp.status === 401) {
+          this.loginRequired = true;
+          this._retryAfterLogin = { url, opts: options };
           this.authRequired = true;
           this.authenticated = false;
           return null;
@@ -813,6 +853,10 @@ function dashboard() {
         });
         if (resp) {
           this.showToast(`Authentication ${!current ? 'enabled' : 'disabled'}`, 'success');
+          if (resp.first_run_password) {
+            this.firstRunPassword = resp.first_run_password;
+            this.firstRunAcknowledged = false;
+          }
           this.fetchSettings(false);
           this.fetchStatus();
         }
