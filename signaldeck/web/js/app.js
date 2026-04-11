@@ -65,6 +65,7 @@ function dashboard() {
     editModalMode: 'create',       // 'create' | 'edit'
     editModalSignal: null,         // source Live signal for create-from-signal mode
     editModalError: '',
+    savingBookmark: false,         // true while saveBookmarkEdit is in flight (prevents double-submit)
     newBookmark: {
       frequency: null,
       label: '',
@@ -1376,6 +1377,7 @@ function dashboard() {
 
     async saveBookmarkEdit() {
       if (!this.editingBookmark) return;
+      if (this.savingBookmark) return;  // prevent double-click duplicate submits
       const bm = this.editingBookmark;
 
       // Client-side validation
@@ -1397,33 +1399,39 @@ function dashboard() {
         notes: bm.notes || '',
       };
 
-      let result;
-      if (this.editModalMode === 'edit') {
-        result = await this.apiFetch(`/api/bookmarks/${bm.id}`, {
-          method: 'PATCH',
-          body: JSON.stringify(payload),
-        });
-      } else {
-        payload.frequency_hz = bm.frequency_hz;
-        result = await this.apiFetch('/api/bookmarks', {
-          method: 'POST',
-          body: JSON.stringify(payload),
-        });
-      }
+      this.savingBookmark = true;
+      try {
+        let result;
+        if (this.editModalMode === 'edit') {
+          result = await this.apiFetch(`/api/bookmarks/${bm.id}`, {
+            method: 'PATCH',
+            body: JSON.stringify(payload),
+          });
+        } else {
+          payload.frequency_hz = bm.frequency_hz;
+          result = await this.apiFetch('/api/bookmarks', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+          });
+        }
 
-      if (result) {
-        this.showToast(
-          this.editModalMode === 'edit' ? 'Bookmark updated' : 'Bookmarked ' + this.formatFreq(bm.frequency_hz),
-          'success',
-        );
-        this.editingBookmark = null;
-        this.fetchBookmarks();
+        if (result) {
+          this.showToast(
+            this.editModalMode === 'edit' ? 'Bookmark updated' : 'Bookmarked ' + this.formatFreq(bm.frequency_hz),
+            'success',
+          );
+          this.editingBookmark = null;
+          this.fetchBookmarks();
+        }
+      } finally {
+        this.savingBookmark = false;
       }
     },
 
     cancelBookmarkEdit() {
       this.editingBookmark = null;
       this.editModalError = '';
+      this.savingBookmark = false;
     },
 
     isGqrxBackend() {
