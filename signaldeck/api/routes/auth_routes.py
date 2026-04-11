@@ -1,3 +1,5 @@
+import hashlib
+
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
@@ -149,3 +151,68 @@ async def toggle_auth(data: ToggleAuthRequest):
     if first_run_password is not None:
         response_body["first_run_password"] = first_run_password
     return response_body
+
+
+class SessionRename(BaseModel):
+    label: str
+
+
+def _current_token_hash_from_request(request: Request) -> str | None:
+    """Return the SHA-256 hash of the current request's sd_remember cookie,
+    or None if the request is not using a cookie (e.g., Bearer-authed scripts)."""
+    cookie = request.cookies.get("sd_remember")
+    if not cookie:
+        return None
+    return hashlib.sha256(cookie.encode()).hexdigest()
+
+
+@router.get("/sessions")
+async def list_sessions(request: Request):
+    """List every remember-me session. Annotates the requesting device as
+    is_current=True if a cookie is present and matches."""
+    db = get_db()
+    rows = await db.list_remember_tokens()
+
+    current_hash = _current_token_hash_from_request(request)
+    if current_hash is not None:
+        # We don't expose token_hash, but we need it for the is_current
+        # match. Query it separately without leaking.
+        current_row = await db.get_remember_token_by_hash(current_hash)
+        current_id = current_row["id"] if current_row else None
+    else:
+        current_id = None
+
+    for row in rows:
+        row["is_current"] = (row["id"] == current_id)
+    return rows
+
+
+@router.patch("/sessions/{session_id}")
+async def rename_session(session_id: int, data: SessionRename):
+    db = get_db()
+    ok = await db.rename_remember_token(session_id, data.label)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"id": session_id, "label": data.label}
+
+
+@router.delete("/sessions/{session_id}")
+async def revoke_session(session_id: int):
+    db = get_db()
+    ok = await db.revoke_remember_token(session_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"revoked": True, "id": session_id}
+
+
+@router.post("/logout")
+async def logout(request: Request, response: Response):
+    """Revoke the current device's remember-me token and clear the cookie."""
+    db = get_db()
+    current_hash = _current_token_hash_from_request(request)
+    if current_hash:
+        row = await db.get_remember_token_by_hash(current_hash)
+        if row is not None:
+            await db.revoke_remember_token(row["id"])
+    response.delete_cookie("sd_remember", path="/")
+    return {"logged_out": True}
