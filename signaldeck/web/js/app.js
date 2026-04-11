@@ -74,6 +74,13 @@ function dashboard() {
     audioVolume: 0.7,
     audioLevel: 0,
     audioPlayer: null,
+    audioMode: 'auto',  // auto | gqrx | pcm_stream
+    audioStatus: {
+      configured_mode: 'auto',
+      effective_mode: 'gqrx',
+      subscriber_count: 0,
+      remote_subscriber_count: 0,
+    },
 
     // --- Scanner Status / Settings ---
     scannerStatus: {},
@@ -572,6 +579,9 @@ function dashboard() {
         this.scannerStatus.squelch_offset = this.editSettings.squelch_offset;
         this.scannerStatus.fft_size = this.editSettings.fft_size;
         this.scannerStatus.dwell_time_ms = this.editSettings.dwell_time_ms;
+        if (settings.scanner.audio_mode) {
+          this.audioMode = settings.scanner.audio_mode;
+        }
       }
       if (settings.devices) {
         this.scannerStatus.gain = settings.devices.gain;
@@ -633,6 +643,16 @@ function dashboard() {
       }
     },
 
+    async saveAudioMode() {
+      const resp = await this.apiFetch('/api/settings', {
+        method: 'PUT',
+        body: JSON.stringify({ audio_mode: this.audioMode }),
+      });
+      if (resp) {
+        this.showToast(`Audio mode: ${this.audioMode}`, 'success');
+      }
+    },
+
     addScanRange() {
       this.editSettings.scan_ranges.push({ label: '', start_mhz: 0, end_mhz: 0, step_khz: 200, priority: 10 });
     },
@@ -677,7 +697,12 @@ function dashboard() {
     async fetchStatusPage() {
       try {
         const data = await this.apiFetch('/api/status', { _silent: true });
-        if (data) this.statusData = data;
+        if (data) {
+          this.statusData = data;
+          if (data.audio) {
+            this.audioStatus = data.audio;
+          }
+        }
       } catch (e) { /* status page is non-critical */ }
       await Promise.all([this.fetchStatus(), this.fetchSettings(false), this.fetchProcessStatus()]);
     },
