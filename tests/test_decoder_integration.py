@@ -85,11 +85,17 @@ def test_dmr_routes_to_dsd():
     assert matches[0][0].name == "dsd"
 
 def test_noaa_apt_routes_correctly():
-    registry = create_default_registry()
-    signal = SignalInfo(frequency_hz=137.1e6, bandwidth_hz=40e3, peak_power=-60.0,
-                        modulation="FM", protocol_hint="noaa_apt")
-    matches = registry.find_decoders(signal)
-    assert matches[0][0].name == "noaa_apt"
+    # The NOAA APT decoder now wraps SatDump and returns 0 confidence
+    # when satdump is not on PATH. Mock tool_available so this test
+    # exercises the routing logic regardless of whether the host has
+    # satdump installed.
+    from unittest.mock import patch
+    with patch("signaldeck.decoders.noaa_apt.tool_available", return_value=True):
+        registry = create_default_registry()
+        signal = SignalInfo(frequency_hz=137.1e6, bandwidth_hz=40e3, peak_power=-60.0,
+                            modulation="FM", protocol_hint="noaa_apt")
+        matches = registry.find_decoders(signal)
+        assert matches[0][0].name == "noaa_apt"
 
 def test_total_decoder_count():
     registry = create_default_registry()

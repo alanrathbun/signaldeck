@@ -1,7 +1,40 @@
+"""NOAA APT and Meteor-M LRPT weather satellite decoder via SatDump.
+
+SatDump (https://github.com/SatDump/SatDump) is a mature, actively maintained
+C++ satellite decoder that handles NOAA 15/18/19 APT, Meteor-M LRPT, GOES,
+and dozens of other satellites. This module wraps SatDump as a subprocess
+and surfaces the resulting images as DecoderResults.
+
+SatDump is NOT in the standard Debian/Ubuntu repositories. To install:
+
+    # Ubuntu/Debian — fetch the latest .deb from GitHub releases
+    wget https://github.com/SatDump/SatDump/releases/latest/download/satdump_ubuntu_latest_amd64.deb
+    sudo apt install ./satdump_ubuntu_latest_amd64.deb
+
+    # Or build from source (see https://docs.satdump.org/building.html)
+
+Once `satdump` is on PATH, SignalDeck picks it up automatically — no code
+changes needed. The decoder degrades to "tool not installed" mode if
+satdump is absent, and logs a warning rather than raising.
+
+Supported pipelines (from docs.satdump.org/pipelines.html):
+    - noaa_apt_demod      NOAA 15/18/19 APT (137 MHz)
+    - meteor_m2-x_lrpt    Meteor-M N2/N2-2/N2-3/N2-4 LRPT (137 MHz)
+    - meteor_m-hrpt       Meteor-M HRPT (1.7 GHz)
+    - goes_hrit           GOES HRIT (1.7 GHz)
+
+This module exposes the first two pipelines (APT + LRPT) because they're
+the ones an operator with an RTL-SDR and a V-dipole can actually receive.
+HRPT and HRIT require dish antennas.
+"""
+from __future__ import annotations
+
+import asyncio
 import logging
 import shutil
+import tempfile
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from math import gcd
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -12,45 +45,72 @@ from signaldeck.decoders.supervisor import ProcessConfig, ProcessSupervisor
 
 logger = logging.getLogger(__name__)
 
-# NOAA APT satellite frequencies and metadata
-NOAA_SATELLITES = [
-    {
-        "name": "NOAA-15",
-        "freq_hz": 137.62e6,
-        "status": "decommissioned_2025",
-    },
-    {
-        "name": "NOAA-18",
-        "freq_hz": 137.9125e6,
-        "status": "decommissioned_2025",
-    },
-    {
-        "name": "NOAA-19",
-        "freq_hz": 137.1e6,
-        "status": "decommissioned_2025",
-    },
+
+@dataclass(frozen=True)
+class SatelliteInfo:
+    name: str
+    freq_hz: float
+    pipeline: str
+    status: str  # "active" | "decommissioned" | "unknown"
+
+
+# Weather satellites we can decode with an RTL-SDR. Metadata used for
+# frequency matching in can_decode(). Pipeline strings match SatDump's
+# CLI pipeline IDs.
+WEATHER_SATELLITES: list[SatelliteInfo] = [
+    # NOAA APT — all three are technically decommissioned as of 2025,
+    # but the signals still transmit intermittently and old recordings
+    # are a common test case.
+    SatelliteInfo("NOAA-15", 137.620e6, "noaa_apt_demod", "decommissioned_2025"),
+    SatelliteInfo("NOAA-18", 137.9125e6, "noaa_apt_demod", "decommissioned_2025"),
+    SatelliteInfo("NOAA-19", 137.100e6, "noaa_apt_demod", "decommissioned_2025"),
+    # Meteor-M LRPT — Russian polar weather satellites, active replacements
+    # for the NOAA APT series. LRPT is QPSK'd, SatDump handles it.
+    SatelliteInfo("Meteor-M N2-3", 137.900e6, "meteor_m2-x_lrpt", "active"),
+    SatelliteInfo("Meteor-M N2-4", 137.900e6, "meteor_m2-x_lrpt", "active"),
 ]
 
-# Frequency match tolerance in Hz
+# Frequency match tolerance in Hz — wide because Doppler shift during a
+# pass can push the effective frequency by ±3 kHz.
 _FREQ_TOLERANCE_HZ = 25_000
 
 
 def tool_available() -> bool:
-    """Return True if the aptdec command-line tool is installed."""
-    return shutil.which("aptdec") is not None
+    """Return True if the satdump binary is on PATH."""
+    return shutil.which("satdump") is not None
+
+
+def _satellite_for_frequency(freq_hz: float) -> SatelliteInfo | None:
+    """Return the satellite whose nominal frequency is closest to freq_hz,
+    or None if nothing matches within _FREQ_TOLERANCE_HZ."""
+    best: tuple[float, SatelliteInfo] | None = None
+    for sat in WEATHER_SATELLITES:
+        delta = abs(sat.freq_hz - freq_hz)
+        if delta <= _FREQ_TOLERANCE_HZ:
+            if best is None or delta < best[0]:
+                best = (delta, sat)
+    return best[1] if best else None
 
 
 class NoaaAptDecoder(DecoderPlugin):
-    """Decoder for NOAA APT (Automatic Picture Transmission) satellite imagery.
+    """Weather-satellite decoder wrapping SatDump.
 
-    Receives IQ data, FM-demodulates it, resamples to 11025 Hz (the standard
-    APT audio sample rate), saves a WAV file, then optionally invokes aptdec
-    to produce a PNG image.
+    Decodes NOAA APT and Meteor-M LRPT live from I/Q samples. Writes
+    SatDump's PNG outputs into `image_dir` and yields one DecoderResult
+    per output image.
+
+    The live-decode mode isn't used — SatDump's `live` command wants to
+    own the SDR device, which conflicts with SignalDeck's scanner loop.
+    Instead we collect I/Q into a temp file and run SatDump's
+    baseband-processing mode on that file after the pass ends.
     """
 
-    _APT_AUDIO_RATE = 11025  # Hz – standard rate expected by aptdec
+    # SatDump's baseband input format — "f32" is raw interleaved complex
+    # float32 at native sample rate, which matches what we already have
+    # in-memory as numpy complex64.
+    _INPUT_LEVEL = "baseband"
 
-    def __init__(self, image_dir: str = "data/images") -> None:
+    def __init__(self, image_dir: str = "data/images/satellite") -> None:
         self._image_dir = Path(image_dir)
         self._image_dir.mkdir(parents=True, exist_ok=True)
         self._supervisor = ProcessSupervisor()
@@ -58,135 +118,142 @@ class NoaaAptDecoder(DecoderPlugin):
     # ------------------------------------------------------------------
     # DecoderPlugin interface
     # ------------------------------------------------------------------
-
     @property
     def name(self) -> str:
         return "noaa_apt"
 
     @property
     def protocols(self) -> list[str]:
-        return ["noaa_apt"]
+        return ["noaa_apt", "meteor_m_lrpt"]
 
     @property
     def input_type(self) -> str:
         return "iq"
 
     def can_decode(self, signal: SignalInfo) -> float:
-        if signal.protocol_hint == "noaa_apt":
-            return 0.95
-        for sat in NOAA_SATELLITES:
-            if abs(signal.frequency_hz - sat["freq_hz"]) <= _FREQ_TOLERANCE_HZ:
-                return 0.85
-        return 0.0
+        if not tool_available():
+            return 0.0
+        sat = _satellite_for_frequency(signal.frequency_hz)
+        if sat is None:
+            return 0.0
+        # High confidence on a known APT/LRPT frequency within tolerance.
+        return 0.85
 
     async def decode(
         self, signal: SignalInfo, data_source
     ) -> AsyncIterator[DecoderResult]:
-        from signaldeck.engine.audio_pipeline import fm_demodulate, save_audio_wav
-        from scipy.signal import resample_poly
+        if not tool_available():
+            logger.warning(
+                "satdump not installed — skipping NOAA APT/LRPT decode. "
+                "Install from https://github.com/SatDump/SatDump/releases"
+            )
+            return
 
-        # Collect all IQ chunks
-        chunks = []
-        async for iq_chunk in data_source:
-            chunks.append(iq_chunk)
+        sat = _satellite_for_frequency(signal.frequency_hz)
+        if sat is None:
+            logger.debug(
+                "No known satellite within %d Hz of %.3f MHz",
+                _FREQ_TOLERANCE_HZ,
+                signal.frequency_hz / 1e6,
+            )
+            return
 
-        if chunks:
-            iq_data = np.concatenate(chunks)
-        else:
-            iq_data = np.zeros(0, dtype=np.complex64)
+        iq = await self._collect_iq(data_source)
+        if iq is None or len(iq) == 0:
+            logger.warning("No I/Q samples collected for %s", sat.name)
+            return
 
-        # FM demodulate to intermediate audio at sample_rate
-        sample_rate = signal.sample_rate
-        if len(iq_data) > 1:
-            audio = fm_demodulate(iq_data, sample_rate=sample_rate, audio_rate=sample_rate)
-        else:
-            audio = np.zeros(0, dtype=np.float32)
+        # Write the I/Q buffer to a temp baseband file that SatDump
+        # can read. SatDump expects interleaved float32 (not complex64).
+        iq_f32 = iq.astype(np.complex64, copy=False)
+        interleaved = np.empty(len(iq_f32) * 2, dtype=np.float32)
+        interleaved[0::2] = iq_f32.real
+        interleaved[1::2] = iq_f32.imag
 
-        # Resample to APT standard rate (11025 Hz)
-        if len(audio) > 0 and sample_rate != self._APT_AUDIO_RATE:
-            from_int = int(sample_rate)
-            to_int = self._APT_AUDIO_RATE
-            divisor = gcd(from_int, to_int)
-            up = to_int // divisor
-            down = from_int // divisor
-            audio = resample_poly(audio, up, down).astype(np.float32)
+        with tempfile.NamedTemporaryFile(
+            suffix=".f32", delete=False, dir=str(self._image_dir)
+        ) as tmp:
+            tmp.write(interleaved.tobytes())
+            tmp_path = tmp.name
 
-        # Build WAV file path
+        # Per-pass output subdirectory keeps SatDump's multiple output
+        # files grouped so we can scan the directory afterward.
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        freq_label = f"{signal.frequency_hz / 1e6:.4f}MHz"
-        wav_path = str(self._image_dir / f"{timestamp}_{freq_label}.wav")
+        out_dir = self._image_dir / f"{sat.name.replace(' ', '_')}_{timestamp}"
+        out_dir.mkdir(parents=True, exist_ok=True)
 
-        if len(audio) > 0:
-            save_audio_wav(audio, wav_path, sample_rate=self._APT_AUDIO_RATE)
-        else:
-            # Still create an empty-ish WAV so aptdec has something to open
-            save_audio_wav(np.zeros(self._APT_AUDIO_RATE, dtype=np.float32), wav_path,
-                           sample_rate=self._APT_AUDIO_RATE)
+        config = ProcessConfig(
+            command=[
+                "satdump",
+                sat.pipeline,
+                self._INPUT_LEVEL,
+                tmp_path,
+                str(out_dir),
+                "--samplerate", str(int(signal.sample_rate)),
+                "--baseband_format", "f32",
+            ],
+            name=f"satdump-{sat.pipeline}",
+        )
 
-        # Determine which satellite this is (for metadata)
-        satellite_name = self._identify_satellite(signal.frequency_hz)
+        logger.info(
+            "Running SatDump %s pipeline on %.3f MHz capture (%d samples)",
+            sat.pipeline,
+            signal.frequency_hz / 1e6,
+            len(iq),
+        )
 
-        # Try to run aptdec
-        if tool_available():
-            png_path = wav_path.replace(".wav", ".png")
-            config = ProcessConfig(
-                command=["aptdec", wav_path, "-o", png_path],
-                name=f"aptdec_{timestamp}",
+        try:
+            await self._supervisor.run_once(config, timeout=600.0)
+        except Exception as e:
+            logger.warning("SatDump invocation failed: %s", e)
+            return
+        finally:
+            try:
+                Path(tmp_path).unlink()
+            except OSError:
+                pass
+
+        # Scan the output directory for PNG/JPG images SatDump produced.
+        images = sorted(out_dir.glob("*.png")) + sorted(out_dir.glob("*.jpg"))
+        if not images:
+            logger.warning(
+                "SatDump produced no images in %s — pass may have been too "
+                "weak, frequency off, or pipeline mismatched",
+                out_dir,
             )
-            lines: list[str] = []
+            return
 
-            async def collect(line: str) -> None:
-                lines.append(line)
-
-            return_code = await self._supervisor.run_once(config, collect, timeout=60.0)
-            image_exists = Path(png_path).exists()
-
+        for img_path in images:
             yield DecoderResult(
                 timestamp=datetime.now(timezone.utc),
                 frequency=signal.frequency_hz,
-                protocol="noaa_apt",
+                protocol=sat.pipeline,
                 result_type="image",
                 content={
-                    "image_path": png_path if image_exists else None,
-                    "wav_path": wav_path,
-                    "satellite": satellite_name,
-                    "aptdec_output": lines,
-                    "aptdec_return_code": return_code,
-                    "status": "ok" if image_exists else "aptdec_failed",
+                    "satellite": sat.name,
+                    "image_path": str(img_path),
+                    "channel": img_path.stem,
                 },
                 metadata={
-                    "strength": signal.peak_power,
-                    "bandwidth_hz": signal.bandwidth_hz,
-                    "audio_samples": len(audio),
-                    "audio_rate_hz": self._APT_AUDIO_RATE,
-                },
-            )
-        else:
-            yield DecoderResult(
-                timestamp=datetime.now(timezone.utc),
-                frequency=signal.frequency_hz,
-                protocol="noaa_apt",
-                result_type="image",
-                content={
-                    "image_path": None,
-                    "wav_path": wav_path,
-                    "satellite": satellite_name,
-                    "status": "aptdec_not_installed",
-                },
-                metadata={
-                    "strength": signal.peak_power,
-                    "bandwidth_hz": signal.bandwidth_hz,
-                    "audio_samples": len(audio),
-                    "audio_rate_hz": self._APT_AUDIO_RATE,
+                    "satellite": sat.name,
+                    "pipeline": sat.pipeline,
+                    "status": sat.status,
+                    "output_dir": str(out_dir),
                 },
             )
 
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
+    async def decode_to_list(self, signal: SignalInfo, data_source) -> list[DecoderResult]:
+        return [result async for result in self.decode(signal, data_source)]
 
-    def _identify_satellite(self, frequency_hz: float) -> str | None:
-        for sat in NOAA_SATELLITES:
-            if abs(frequency_hz - sat["freq_hz"]) <= _FREQ_TOLERANCE_HZ:
-                return sat["name"]
-        return None
+    async def stop(self) -> None:
+        await self._supervisor.stop_all()
+
+    async def _collect_iq(self, data_source) -> np.ndarray | None:
+        if isinstance(data_source, np.ndarray):
+            return data_source.astype(np.complex64, copy=False)
+        chunks = []
+        async for chunk in data_source:
+            chunks.append(chunk)
+        if not chunks:
+            return None
+        return np.concatenate(chunks).astype(np.complex64, copy=False)
