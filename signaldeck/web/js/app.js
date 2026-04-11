@@ -1283,16 +1283,22 @@ function dashboard() {
       this.startAudio();
     },
 
-    // Fuzzy match a signal frequency against the bookmark list.
-    // Tolerance is ~2.5 kHz — tight enough to keep adjacent channels
+    // Find the bookmark (if any) matching a given frequency within a
+    // ~2.5 kHz tolerance — tight enough to keep adjacent channels
     // (12.5/25/100 kHz spacings) distinct, wide enough to absorb
-    // per-sweep center drift.
-    isBookmarked(freqHz) {
-      if (!freqHz || !this.bookmarks || !this.bookmarks.length) return false;
+    // per-sweep center drift. Returns the bookmark object or null.
+    findBookmarkForFrequency(freqHz) {
+      if (!freqHz || !this.bookmarks || !this.bookmarks.length) return null;
       for (const bm of this.bookmarks) {
-        if (Math.abs((bm.frequency_hz || 0) - freqHz) < 2500) return true;
+        if (Math.abs((bm.frequency_hz || 0) - freqHz) < 2500) return bm;
       }
-      return false;
+      return null;
+    },
+
+    // Thin wrapper kept for existing callers. New code should prefer
+    // findBookmarkForFrequency so it can use the returned object.
+    isBookmarked(freqHz) {
+      return !!this.findBookmarkForFrequency(freqHz);
     },
 
     async quickBookmark(sig) {
