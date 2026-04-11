@@ -900,6 +900,45 @@
           </div>
         </div>
 
+        <!-- Signed-in devices card -->
+        <div class="card" style="margin-top:16px;">
+          <h3 style="margin-top:0;">Signed-in devices</h3>
+          <p style="font-size:0.85rem;color:var(--text-secondary);margin-top:0;">
+            Devices that have logged in with a password and are using a remember-me cookie.
+            Devices on Tailscale / LAN don't appear here — they bypass login entirely.
+          </p>
+          <table class="settings-table" style="width:100%;">
+            <thead>
+              <tr>
+                <th style="text-align:left;">Label</th>
+                <th style="text-align:left;">First signed in</th>
+                <th style="text-align:left;">Last used</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="s in sessions" :key="s.id">
+                <tr>
+                  <td>
+                    <span x-text="s.label || '(unnamed)'"></span>
+                    <span x-show="s.is_current" class="badge badge-green"
+                          style="margin-left:6px;font-size:0.7rem;">this device</span>
+                  </td>
+                  <td x-text="new Date(s.created_at).toLocaleDateString()"></td>
+                  <td x-text="new Date(s.last_used_at).toLocaleString()"></td>
+                  <td style="text-align:right;white-space:nowrap;">
+                    <button class="btn btn-sm" @click="promptRenameSession(s)">Rename</button>
+                    <button class="btn btn-sm btn-danger" @click="revokeSession(s.id)">Revoke</button>
+                  </td>
+                </tr>
+              </template>
+              <tr x-show="sessions.length === 0">
+                <td colspan="4" class="empty-state">No devices signed in.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
         <!-- Data Management -->
         <div class="card">
           <div class="card-header">

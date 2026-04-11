@@ -155,6 +155,9 @@ function dashboard() {
     firstRunPassword: null,
     firstRunAcknowledged: false,
 
+    // --- Sessions ---
+    sessions: [],
+
     // --- Logs ---
     logFiles: [],
     currentLog: { name: '', content: '' },
@@ -259,7 +262,7 @@ function dashboard() {
       switch (this.currentPage) {
         case 'recordings': this.fetchRecordings(); break;
         case 'bookmarks': this.fetchBookmarks(); break;
-        case 'settings': this.fetchSettings(true); break;
+        case 'settings': this.fetchSettings(true); this.fetchSessions(); break;
       }
     },
 
@@ -923,6 +926,44 @@ function dashboard() {
         }
       } catch (e) {
         this.showToast('Failed to change password', 'error');
+      }
+    },
+
+    async fetchSessions() {
+      const data = await this.apiFetch('/api/auth/sessions');
+      if (data) this.sessions = Array.isArray(data) ? data : [];
+    },
+
+    async renameSession(id, newLabel) {
+      if (!newLabel) return;
+      const ok = await this.apiFetch(`/api/auth/sessions/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ label: newLabel }),
+      });
+      if (ok) {
+        this.showToast('Renamed', 'success');
+        this.fetchSessions();
+      }
+    },
+
+    async revokeSession(id) {
+      if (!confirm('Revoke this device? It will need to sign in again.')) return;
+      const resp = await fetch(`/api/auth/sessions/${id}`, {
+        method: 'DELETE',
+        credentials: 'same-origin',
+      });
+      if (resp.status === 200) {
+        this.showToast('Revoked', 'success');
+        this.fetchSessions();
+      } else if (resp.status === 401) {
+        this.loginRequired = true;
+      }
+    },
+
+    promptRenameSession(session) {
+      const newLabel = prompt('New label for this device:', session.label || '');
+      if (newLabel != null && newLabel.trim()) {
+        this.renameSession(session.id, newLabel.trim());
       }
     },
 
