@@ -1024,6 +1024,12 @@ def auth() -> None:
 
 
 @auth.command("set-password")
+@click.option(
+    "--config", "config_path",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="Path to a non-default config YAML.",
+)
 @click.option("--user", default="admin", show_default=True, help="Username to update.")
 @click.option(
     "--password",
@@ -1032,7 +1038,7 @@ def auth() -> None:
     confirmation_prompt=True,
     help="New password (prompted if not provided).",
 )
-def auth_set_password(user: str, password: str) -> None:
+def auth_set_password(config_path: str | None, user: str, password: str) -> None:
     """Reset a user's password without needing the current one.
 
     Intended as a recovery path: the operator runs this on the server
@@ -1042,10 +1048,23 @@ def auth_set_password(user: str, password: str) -> None:
     enforces.
     """
     from signaldeck.api.auth import AuthManager
-    cfg = load_config(None)
+    try:
+        cfg = load_config(config_path)
+    except Exception as exc:
+        raise click.ClickException(f"Failed to load config: {exc}") from exc
     cred_path = cfg.get("auth", {}).get("credentials_path", "config/credentials.yaml")
     mgr = AuthManager(credentials_path=cred_path)
-    mgr.initialize()
+    try:
+        mgr.initialize()
+    except Exception as exc:
+        raise click.ClickException(f"Failed to load credentials ({cred_path}): {exc}") from exc
+
+    if user not in mgr._users:
+        raise click.ClickException(
+            f"User '{user}' does not exist in {cred_path}. "
+            f"Existing users: {sorted(mgr._users.keys())}"
+        )
+
     mgr.change_password(user, password)
     click.echo(f"Password updated for {user}.")
 

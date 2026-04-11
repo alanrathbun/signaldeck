@@ -55,3 +55,46 @@ def test_auth_set_password_defaults_user_to_admin(tmp_path, monkeypatch):
     mgr = AuthManager(credentials_path=str(cred_path))
     mgr.initialize()
     assert mgr.verify_login("admin", "new-pw-789")
+
+
+def test_auth_set_password_rejects_unknown_user(tmp_path, monkeypatch):
+    """Mistyping --user should fail clearly, not silently create a new user."""
+    cred_path = tmp_path / "credentials.yaml"
+    initial = AuthManager(credentials_path=str(cred_path))
+    initial.initialize()
+
+    import signaldeck.main as main_mod
+    def fake_load_config(path):
+        return {"auth": {"credentials_path": str(cred_path)}}
+    monkeypatch.setattr(main_mod, "load_config", fake_load_config)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["auth", "set-password", "--user", "adnim", "--password", "typo-catch"],
+    )
+    # ClickException exits with code 1 and prints the message to stderr
+    assert result.exit_code != 0
+    assert "does not exist" in result.output.lower() or "adnim" in result.output
+
+
+def test_auth_set_password_friendly_error_on_corrupt_credentials(tmp_path, monkeypatch):
+    """A corrupt credentials file should produce a friendly error, not a
+    Python traceback."""
+    cred_path = tmp_path / "credentials.yaml"
+    # Write deliberately malformed YAML
+    cred_path.write_text(":\n  - [unclosed")
+
+    import signaldeck.main as main_mod
+    def fake_load_config(path):
+        return {"auth": {"credentials_path": str(cred_path)}}
+    monkeypatch.setattr(main_mod, "load_config", fake_load_config)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["auth", "set-password", "--password", "anything"],
+    )
+    assert result.exit_code != 0
+    # Output should contain our friendly message, not a bare traceback
+    assert "Failed to load credentials" in result.output or "Failed to load" in result.output
