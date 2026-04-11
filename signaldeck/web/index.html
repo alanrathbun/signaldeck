@@ -331,58 +331,7 @@
     <section x-show="currentPage === 'bookmarks'" x-cloak>
       <div class="page-header">
         <h1>Bookmarks</h1>
-      </div>
-
-      <!-- Add Bookmark Form -->
-      <div class="card">
-        <div class="card-header">
-          <h3>Add Bookmark</h3>
-        </div>
-        <form class="bookmark-form" @submit.prevent="addBookmark()">
-          <div class="form-group">
-            <label>Frequency (MHz)</label>
-            <input type="number" class="form-input" step="0.001" x-model.number="newBookmark.frequency"
-                   placeholder="162.550" required>
-          </div>
-          <div class="form-group">
-            <label>Label</label>
-            <input type="text" class="form-input" x-model="newBookmark.label"
-                   placeholder="NOAA Weather" required>
-          </div>
-          <div class="form-group">
-            <label>Modulation</label>
-            <select class="form-select" x-model="newBookmark.modulation">
-              <option value="">--</option>
-              <option value="FM">FM</option>
-              <option value="NFM">NFM</option>
-              <option value="AM">AM</option>
-              <option value="USB">USB</option>
-              <option value="LSB">LSB</option>
-              <option value="CW">CW</option>
-              <option value="DIGITAL">Digital</option>
-              <option value="P25">P25</option>
-              <option value="DMR">DMR</option>
-              <option value="ADSB">ADS-B</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label>Decoder</label>
-            <select class="form-select" x-model="newBookmark.decoder">
-              <option value="">None</option>
-              <option value="adsb">ADS-B</option>
-              <option value="acars">ACARS</option>
-              <option value="aprs">APRS</option>
-              <option value="pocsag">POCSAG</option>
-              <option value="noaa_apt">NOAA APT</option>
-              <option value="ais">AIS</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label>Priority (1-5)</label>
-            <input type="number" class="form-input" min="1" max="5" x-model.number="newBookmark.priority" value="3">
-          </div>
-          <button type="submit" class="btn btn-success">Add Bookmark</button>
-        </form>
+        <button class="btn btn-primary" @click="openNewBookmark()">+ Add bookmark</button>
       </div>
 
       <!-- Bookmarks Table -->
@@ -403,7 +352,13 @@
               <template x-for="bm in bookmarks" :key="bm.id">
                 <tr>
                   <td class="freq-cell" x-text="formatFreq(bm.frequency_hz)"></td>
-                  <td x-text="bm.label"></td>
+                  <td>
+                    <div x-text="bm.label"></div>
+                    <div x-show="bm.notes" x-cloak
+                         style="font-size:0.8rem;color:var(--text-secondary);margin-top:2px;
+                                white-space:pre-wrap;word-break:break-word;"
+                         x-text="bm.notes"></div>
+                  </td>
                   <td><span class="badge" :class="modBadge(bm.modulation)" x-text="bm.modulation || '--'"></span></td>
                   <td x-text="bm.decoder || '--'"></td>
                   <td>
@@ -411,6 +366,7 @@
                   </td>
                   <td>
                     <button class="btn btn-sm btn-primary" @click="navigate('live'); tuneAndListen(bm.frequency_hz, bm.modulation)">Tune</button>
+                    <button class="btn btn-sm" @click="openEditBookmark(bm)">Edit</button>
                     <button class="btn btn-sm btn-danger" @click="deleteBookmark(bm.id)">Delete</button>
                   </td>
                 </tr>

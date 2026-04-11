@@ -66,13 +66,6 @@ function dashboard() {
     editModalSignal: null,         // source Live signal for create-from-signal mode
     editModalError: '',
     savingBookmark: false,         // true while saveBookmarkEdit is in flight (prevents double-submit)
-    newBookmark: {
-      frequency: null,
-      label: '',
-      modulation: '',
-      decoder: '',
-      priority: 3,
-    },
 
     // --- Audio ---
     audioFreqMhz: null,
@@ -1097,29 +1090,6 @@ function dashboard() {
     // =====================================================
     // Bookmarks CRUD
     // =====================================================
-    async addBookmark() {
-      if (!this.newBookmark.frequency) {
-        this.showToast('Frequency is required', 'error');
-        return;
-      }
-      const payload = {
-        frequency_hz: this.newBookmark.frequency * 1e6, // MHz to Hz
-        label: this.newBookmark.label,
-        modulation: this.newBookmark.modulation,
-        decoder: this.newBookmark.decoder,
-        priority: this.newBookmark.priority,
-      };
-      const data = await this.apiFetch('/api/bookmarks', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      });
-      if (data) {
-        this.showToast('Bookmark added', 'success');
-        this.newBookmark = { frequency: null, label: '', modulation: '', decoder: '', priority: 3 };
-        this.fetchBookmarks();
-      }
-    },
-
     async deleteBookmark(id) {
       const data = await this.apiFetch(`/api/bookmarks/${id}`, { method: 'DELETE' });
       if (data !== null) {
