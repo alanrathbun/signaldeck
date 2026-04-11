@@ -55,7 +55,7 @@ def cli() -> None:
 
 async def _stream_audio(device, frequency_hz: float, send_fn, audio_request_fn,
                         sample_rate: float = 2_000_000,
-                        chunk_duration_s: float = 0.1,
+                        chunk_duration_s: float = 0.04,
                         fft_callback=None,
                         rds_callback=None) -> None:
     """Tune to a frequency and continuously stream demodulated FM audio.
@@ -847,7 +847,9 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                                     audio_stream_fn, audio_request_fn,
                                     sample_rate=2_000_000,
                                     fft_callback=on_fft,
-                                    rds_callback=on_rds,
+                                    # gqrx has its own RDS polling loop; skip the duplicate
+                                    # decode here to keep audio iterations fast.
+                                    rds_callback=on_rds if gqrx_device is None else None,
                                 )
                                 logger.info("Audio streaming ended, resuming scan")
                                 continue
