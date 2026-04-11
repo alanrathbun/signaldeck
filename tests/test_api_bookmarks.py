@@ -138,6 +138,7 @@ async def test_patch_bookmark_partial_update(client):
 
     patch_resp = await client.patch(f"/api/bookmarks/{bk_id}", json={"priority": 5})
     assert patch_resp.status_code == 200
+    assert patch_resp.json() == {"id": bk_id, "updated": True}
 
     list_resp = await client.get("/api/bookmarks")
     row = next(b for b in list_resp.json() if b["id"] == bk_id)
@@ -199,3 +200,38 @@ async def test_patch_bookmark_clears_notes_with_empty_string(client):
     list_resp = await client.get("/api/bookmarks")
     row = next(b for b in list_resp.json() if b["id"] == bk_id)
     assert row["notes"] == ""
+
+
+async def test_patch_bookmark_empty_body_is_noop(client):
+    """PATCH with an empty body is a successful no-op on existing rows.
+
+    The backend's Database.update_bookmark treats empty kwargs as an
+    existence check — returns True if the row exists (even though nothing
+    is modified), False otherwise. At the HTTP layer that maps to 200 on
+    an existing id and 404 on a missing id.
+    """
+    create_resp = await client.post("/api/bookmarks", json={
+        "frequency_hz": 446_000_000.0,
+        "label": "Empty-patch target",
+        "modulation": "NFM",
+        "priority": 2,
+        "notes": "unchanged by empty patch",
+    })
+    bk_id = create_resp.json()["id"]
+
+    # Empty body on an existing id -> 200 no-op
+    resp = await client.patch(f"/api/bookmarks/{bk_id}", json={})
+    assert resp.status_code == 200
+    assert resp.json() == {"id": bk_id, "updated": True}
+
+    # Verify the row was NOT modified
+    list_resp = await client.get("/api/bookmarks")
+    row = next(b for b in list_resp.json() if b["id"] == bk_id)
+    assert row["label"] == "Empty-patch target"
+    assert row["priority"] == 2
+    assert row["notes"] == "unchanged by empty patch"
+
+    # Empty body on a missing id -> 404
+    resp = await client.patch("/api/bookmarks/99999", json={})
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Bookmark not found"
