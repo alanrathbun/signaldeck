@@ -99,4 +99,4 @@ def test_noaa_apt_routes_correctly():
 
 def test_total_decoder_count():
     registry = create_default_registry()
-    assert len(registry.list_decoders()) == 11
+    assert len(registry.list_decoders()) == 12

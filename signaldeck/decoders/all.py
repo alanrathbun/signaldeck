@@ -10,6 +10,7 @@ from signaldeck.decoders.acars import AcarsDecoder
 from signaldeck.decoders.dsd import DsdDecoder
 from signaldeck.decoders.p25 import P25Decoder
 from signaldeck.decoders.noaa_apt import NoaaAptDecoder
+from signaldeck.decoders.fldigi_wefax import FldigiWefaxDecoder
 
 def create_default_registry(recording_dir: str = "data/recordings") -> DecoderRegistry:
     registry = DecoderRegistry()
@@ -24,4 +25,5 @@ def create_default_registry(recording_dir: str = "data/recordings") -> DecoderRe
     registry.register(DsdDecoder(recording_dir=recording_dir))
     registry.register(P25Decoder())
     registry.register(NoaaAptDecoder())
+    registry.register(FldigiWefaxDecoder())
     return registry
