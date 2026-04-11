@@ -323,6 +323,13 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                     "status": f"unavailable: {e}",
                 }
 
+        # Instantiate the audio mode controller if gqrx is available.
+        # This is used inside _gqrx_tuning_loop to debounce AF gain commands.
+        audio_mode_ctrl = None
+        if gqrx_device:
+            from signaldeck.engine.audio_mode_controller import AudioModeController
+            audio_mode_ctrl = AudioModeController(gqrx=gqrx_device._client)
+
         # Set active_devices for SDR-only mode (no gqrx branch above)
         if device and not gqrx_device and not headless:
             try:
@@ -714,6 +721,16 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
             while True:
                 try:
                     audio_req = audio_request_fn()
+
+                    # Apply audio mode flip (mute gqrx when streaming PCM to browser).
+                    if audio_mode_ctrl is not None:
+                        from signaldeck.api.websocket.audio_stream import resolve_effective_audio_mode
+                        scanner_cfg = cfg.get("scanner", {})
+                        configured_mode = scanner_cfg.get("audio_mode", "auto")
+                        effective = resolve_effective_audio_mode(configured_mode)
+                        vol_raw = audio_req.get("volume")
+                        user_volume_db = _slider_to_gqrx_af_gain(vol_raw)
+                        await audio_mode_ctrl.apply_effective_mode(effective, user_volume_db)
 
                     # Handle volume changes (0.0-1.0 -> -60 dB to 0 dB AF gain)
                     vol = audio_req.get("volume")
