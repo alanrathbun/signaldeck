@@ -98,7 +98,7 @@ async def test_login_endpoint(app_with_auth):
             })
             assert resp.status_code == 200
             data = resp.json()
-            assert "session_token" in data
+            assert "remember_token" in data
 
 
 async def test_login_wrong_password(app_with_auth):
