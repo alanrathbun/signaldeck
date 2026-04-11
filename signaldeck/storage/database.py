@@ -300,6 +300,64 @@ class Database:
         await self._conn.commit()
         return cursor.rowcount > 0
 
+    async def update_bookmark(
+        self,
+        bookmark_id: int,
+        *,
+        label: str | None = None,
+        modulation: str | None = None,
+        decoder: str | None = None,
+        priority: int | None = None,
+        camp_on_active: bool | None = None,
+        notes: str | None = None,
+    ) -> bool:
+        """Partial update of a bookmark.
+
+        Only fields passed with a non-None value are modified — this
+        lets callers do "change just label and priority" without having
+        to resend every other field. `notes=""` clears the notes to
+        empty string (not null), which is the distinction the spec uses
+        to separate "don't touch this field" from "clear this field".
+
+        Returns True if the row existed (and was updated if there were
+        any fields to change), False if no such bookmark. An empty
+        kwargs call is treated as an existence check.
+        """
+        updates: list[str] = []
+        params: list = []
+        if label is not None:
+            updates.append("label = ?")
+            params.append(label)
+        if modulation is not None:
+            updates.append("modulation = ?")
+            params.append(modulation)
+        if decoder is not None:
+            updates.append("decoder = ?")
+            params.append(decoder)
+        if priority is not None:
+            updates.append("priority = ?")
+            params.append(priority)
+        if camp_on_active is not None:
+            updates.append("camp_on_active = ?")
+            params.append(int(camp_on_active))
+        if notes is not None:
+            updates.append("notes = ?")
+            params.append(notes)
+
+        if not updates:
+            # No fields to change — just report whether the row exists.
+            cursor = await self._conn.execute(
+                "SELECT id FROM bookmarks WHERE id = ?", (bookmark_id,)
+            )
+            row = await cursor.fetchone()
+            return row is not None
+
+        params.append(bookmark_id)
+        sql = f"UPDATE bookmarks SET {', '.join(updates)} WHERE id = ?"
+        cursor = await self._conn.execute(sql, params)
+        await self._conn.commit()
+        return cursor.rowcount > 0
+
     # ---- Remember-me tokens (long-lived session cookies) ----
 
     async def insert_remember_token(

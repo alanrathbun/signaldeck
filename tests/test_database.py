@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from signaldeck.storage.database import Database
-from signaldeck.storage.models import Signal, ActivityEntry
+from signaldeck.storage.models import Signal, ActivityEntry, Bookmark
 
 
 @pytest.fixture
@@ -118,3 +118,90 @@ async def test_get_all_signals(db: Database):
 
     signals = await db.get_all_signals()
     assert len(signals) == 3
+
+
+async def test_update_bookmark_partial_fields(db: Database):
+    """Only the fields passed in are modified; others are preserved."""
+    # Seed a bookmark with every field set.
+    bk = Bookmark(
+        frequency=162_400_000.0,
+        label="NOAA Weather",
+        modulation="NFM",
+        decoder="weather",
+        priority=5,
+        camp_on_active=False,
+        notes="original notes",
+        created_at=datetime.now(timezone.utc),
+    )
+    bk_id = await db.insert_bookmark(bk)
+
+    # Update only priority.
+    ok = await db.update_bookmark(bk_id, priority=3)
+    assert ok is True
+
+    # Fetch back and verify: priority changed, everything else unchanged.
+    rows = await db.get_all_bookmarks()
+    row = next(b for b in rows if b.id == bk_id)
+    assert row.priority == 3
+    assert row.label == "NOAA Weather"
+    assert row.modulation == "NFM"
+    assert row.decoder == "weather"
+    assert row.camp_on_active is False
+    assert row.notes == "original notes"
+
+
+async def test_update_bookmark_returns_false_for_missing_id(db: Database):
+    """Updating a nonexistent bookmark returns False."""
+    ok = await db.update_bookmark(999999, label="ghost")
+    assert ok is False
+
+
+async def test_update_bookmark_empty_kwargs_checks_existence(db: Database):
+    """Calling update_bookmark with no kwargs acts as 'does the row exist' check.
+
+    Returns True if the bookmark exists, False if not. Does not modify
+    any row. This matters because the API layer can call update_bookmark
+    with an empty PATCH payload and still get a correct 404/200 outcome."""
+    bk = Bookmark(
+        frequency=100_100_000.0,
+        label="Existing",
+        modulation="FM",
+        decoder=None,
+        priority=3,
+        camp_on_active=False,
+        notes="",
+        created_at=datetime.now(timezone.utc),
+    )
+    bk_id = await db.insert_bookmark(bk)
+
+    # Empty kwargs on an existing id -> True (row exists)
+    assert await db.update_bookmark(bk_id) is True
+    # Empty kwargs on missing id -> False
+    assert await db.update_bookmark(999999) is False
+
+    # Verify the existing row was NOT modified (label should still be "Existing")
+    rows = await db.get_all_bookmarks()
+    row = next(b for b in rows if b.id == bk_id)
+    assert row.label == "Existing"
+
+
+async def test_update_bookmark_clears_notes_with_empty_string(db: Database):
+    """Passing notes='' clears the notes field (stored as empty string)."""
+    bk = Bookmark(
+        frequency=146_520_000.0,
+        label="2m Calling",
+        modulation="FM",
+        decoder=None,
+        priority=2,
+        camp_on_active=False,
+        notes="some notes",
+        created_at=datetime.now(timezone.utc),
+    )
+    bk_id = await db.insert_bookmark(bk)
+
+    ok = await db.update_bookmark(bk_id, notes="")
+    assert ok is True
+
+    rows = await db.get_all_bookmarks()
+    row = next(b for b in rows if b.id == bk_id)
+    assert row.notes == ""
