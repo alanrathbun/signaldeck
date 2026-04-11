@@ -100,6 +100,25 @@ async def test_rename_session(tmp_path):
             assert list_resp.json()[0]["label"] == "new label"
 
 
+async def test_rename_session_rejects_empty_label(tmp_path):
+    app = create_app(_config(tmp_path))
+    async with app.router.lifespan_context(app):
+        mgr = get_auth_manager()
+        db = get_db()
+        raw = await mgr.create_remember_token(db, user_agent="ua", ip="1.1.1.1")
+
+        async with await _authed_client(app, raw) as c:
+            list_resp = await c.get("/api/auth/sessions")
+            session_id = list_resp.json()[0]["id"]
+
+            resp = await c.patch(
+                f"/api/auth/sessions/{session_id}",
+                json={"label": ""},
+            )
+            # Pydantic should reject the empty label with a 422
+            assert resp.status_code == 422
+
+
 async def test_rename_missing_returns_404(tmp_path):
     app = create_app(_config(tmp_path))
     async with app.router.lifespan_context(app):
@@ -136,6 +155,18 @@ async def test_revoke_session(tmp_path):
             assert len(list_resp.json()) == 1
 
 
+async def test_revoke_missing_returns_404(tmp_path):
+    app = create_app(_config(tmp_path))
+    async with app.router.lifespan_context(app):
+        mgr = get_auth_manager()
+        db = get_db()
+        raw = await mgr.create_remember_token(db, user_agent="ua", ip="1.1.1.1")
+
+        async with await _authed_client(app, raw) as c:
+            resp = await c.delete("/api/auth/sessions/99999")
+            assert resp.status_code == 404
+
+
 async def test_logout_revokes_current_token(tmp_path):
     app = create_app(_config(tmp_path))
     async with app.router.lifespan_context(app):
@@ -152,3 +183,38 @@ async def test_logout_revokes_current_token(tmp_path):
             # the DB row is gone).
             resp = await c.get("/api/auth/sessions")
             assert resp.status_code == 401
+
+
+async def test_logout_is_idempotent(tmp_path):
+    """Calling /logout twice should not error — second call is a no-op
+    (DB row already gone, cookie already cleared)."""
+    app = create_app(_config(tmp_path))
+    async with app.router.lifespan_context(app):
+        mgr = get_auth_manager()
+        db = get_db()
+        raw = await mgr.create_remember_token(db, user_agent="ua", ip="1.1.1.1")
+
+        async with await _authed_client(app, raw) as c:
+            resp1 = await c.post("/api/auth/logout")
+            assert resp1.status_code == 200
+
+            # Second POST with the same cookie (client still has it)
+            resp2 = await c.post("/api/auth/logout")
+            assert resp2.status_code == 200
+            assert resp2.json()["logged_out"] is True
+
+
+async def test_logout_works_for_bearer_only_client(tmp_path):
+    """A client authed via Bearer token (no sd_remember cookie) can POST
+    /logout without error. Nothing to revoke; cookie delete is a no-op."""
+    app = create_app(_config(tmp_path))
+    async with app.router.lifespan_context(app):
+        mgr = get_auth_manager()
+        transport = ASGITransport(app=app, client=_REMOTE_IP)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            resp = await c.post(
+                "/api/auth/logout",
+                headers={"authorization": f"Bearer {mgr.api_token}"},
+            )
+            assert resp.status_code == 200
+            assert resp.json()["logged_out"] is True

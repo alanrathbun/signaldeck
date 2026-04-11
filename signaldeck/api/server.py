@@ -25,6 +25,7 @@ def get_auth_manager():
 _PUBLIC_PATHS: frozenset[str] = frozenset({
     "/api/health",
     "/api/auth/login",
+    "/api/auth/logout",
     "/api/auth/toggle",
 })
 

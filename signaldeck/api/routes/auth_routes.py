@@ -1,7 +1,7 @@
 import hashlib
 
 from fastapi import APIRouter, HTTPException, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from signaldeck.api.server import get_auth_manager, get_config, get_db
 
@@ -154,7 +154,7 @@ async def toggle_auth(data: ToggleAuthRequest):
 
 
 class SessionRename(BaseModel):
-    label: str
+    label: str = Field(min_length=1, max_length=128)
 
 
 def _current_token_hash_from_request(request: Request) -> str | None:
