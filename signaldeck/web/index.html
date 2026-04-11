@@ -80,6 +80,7 @@
       <div class="page-header">
         <h1>Live Scanner</h1>
         <div class="scanner-controls">
+          <span class="badge badge-blue" x-show="liveCurrentRange" x-text="formatRangeSummary(liveCurrentRange)"></span>
           <select class="form-select" x-model="scanMode">
             <option value="sweep">Sweep</option>
             <option value="bookmarks">Bookmarks</option>
@@ -147,6 +148,7 @@
           <h3>Active Signals</h3>
           <div style="display:flex;gap:8px;align-items:center">
             <span class="badge badge-green" x-text="filteredLiveSignals.length + ' active'"></span>
+            <button class="btn btn-small btn-danger" @click="clearLiveSignals()" title="Clear live signals">Clear</button>
             <button class="btn btn-small" @click="showColumnPicker = !showColumnPicker" title="Show/hide columns">Columns</button>
           </div>
         </div>
@@ -154,10 +156,11 @@
         <!-- Column picker -->
         <div class="signal-filters" x-show="showColumnPicker" x-cloak style="flex-wrap:wrap">
           <template x-for="col in allLiveColumns" :key="col.key">
-            <label class="toggle-label" style="margin-right:10px;font-size:0.85rem">
+            <label class="switch-control compact" style="margin-right:10px">
               <input type="checkbox" :checked="liveVisibleCols.includes(col.key)"
                      @change="toggleLiveCol(col.key)">
-              <span x-text="col.label"></span>
+              <span class="switch-slider"></span>
+              <span class="switch-text" x-text="col.label"></span>
             </label>
           </template>
         </div>
@@ -176,6 +179,12 @@
               <option :value="proto" x-text="proto"></option>
             </template>
           </select>
+          <select class="form-select filter-select" x-model="liveFilterSignalClass" title="Filter by signal classification">
+            <option value="">All Signal Classes</option>
+            <template x-for="signalClass in liveSignalClasses" :key="signalClass">
+              <option :value="signalClass" x-text="signalClass"></option>
+            </template>
+          </select>
           <input type="number" class="form-input filter-select" x-model.number="liveFilterMinPower"
                  placeholder="Min dBFS" title="Minimum signal strength" style="width:100px">
           <input type="text" class="form-input filter-select" x-model="liveFilterFreq"
@@ -191,7 +200,7 @@
           <input type="number" class="form-input filter-select" x-model.number="liveFilterBandwidthMax"
                  placeholder="BW max Hz" title="Maximum bandwidth (Hz)" style="width:100px">
           <button class="btn btn-small" @click="clearLiveFilters()"
-            x-show="liveFilterMod || liveFilterProto || liveFilterMinPower || liveFilterFreq || liveFilterDecoder || liveFilterBandwidthMin || liveFilterBandwidthMax">Clear</button>
+            x-show="liveFilterMod || liveFilterProto || liveFilterSignalClass || liveFilterMinPower || liveFilterFreq || liveFilterDecoder || liveFilterBandwidthMin || liveFilterBandwidthMax">Clear</button>
         </div>
 
         <div class="table-wrap">
@@ -209,12 +218,16 @@
                 <th x-show="liveVisibleCols.includes('protocol')" @click="sortLive('protocol')" class="sortable-th">
                   Protocol <span x-text="liveSortIcon('protocol')"></span></th>
                 <th x-show="liveVisibleCols.includes('rds')">RDS</th>
-                <th x-show="liveVisibleCols.includes('hits')">Hits</th>
-                <th x-show="liveVisibleCols.includes('last_seen')">Last Seen</th>
+                <th x-show="liveVisibleCols.includes('hits')" @click="sortLive('hits')" class="sortable-th">
+                  Hits <span x-text="liveSortIcon('hits')"></span></th>
+                <th x-show="liveVisibleCols.includes('last_seen')" @click="sortLive('last_seen')" class="sortable-th">
+                  Last Seen <span x-text="liveSortIcon('last_seen')"></span></th>
                 <th x-show="liveVisibleCols.includes('first_seen')" @click="sortLive('first_seen')" class="sortable-th">
                   First Seen <span x-text="liveSortIcon('first_seen')"></span></th>
                 <th x-show="liveVisibleCols.includes('confidence')" @click="sortLive('confidence')" class="sortable-th">
                   Confidence <span x-text="liveSortIcon('confidence')"></span></th>
+                <th x-show="liveVisibleCols.includes('signal_class')" @click="sortLive('signal_class')" class="sortable-th">
+                  Signal Class <span x-text="liveSortIcon('signal_class')"></span></th>
                 <th x-show="liveVisibleCols.includes('decoder')" @click="sortLive('decoder')" class="sortable-th">
                   Decoder <span x-text="liveSortIcon('decoder')"></span></th>
                 <th x-show="liveVisibleCols.includes('activity_type')" @click="sortLive('activity_type')" class="sortable-th">
@@ -250,6 +263,7 @@
                   <td x-show="liveVisibleCols.includes('last_seen')" x-text="sig._updated ? new Date(sig._updated).toLocaleTimeString() : '--'"></td>
                   <td x-show="liveVisibleCols.includes('first_seen')" x-text="sig.first_seen ? formatTime(sig.first_seen) : '--'"></td>
                   <td x-show="liveVisibleCols.includes('confidence')" x-text="sig.confidence ? (sig.confidence * 100).toFixed(0) + '%' : '--'"></td>
+                  <td x-show="liveVisibleCols.includes('signal_class')" x-text="sig.signal_class || '--'"></td>
                   <td x-show="liveVisibleCols.includes('decoder')"><span class="badge badge-blue" x-show="sig.decoder" x-text="sig.decoder"></span><span x-show="!sig.decoder">--</span></td>
                   <td x-show="liveVisibleCols.includes('activity_type')" x-text="sig.activity_type || '--'"></td>
                   <td x-show="liveVisibleCols.includes('activity_summary')" class="summary-cell" x-text="sig.activity_summary || '--'"></td>
@@ -422,6 +436,54 @@
       </div>
 
       <div class="settings-grid">
+        <!-- Service Process -->
+        <div class="card">
+          <div class="card-header">
+            <h3>Service</h3>
+            <span class="badge"
+                  :class="processStateBadgeClass()"
+                  x-text="processStateLabel()"></span>
+          </div>
+          <div class="settings-list">
+            <div class="setting-row">
+              <span class="setting-label">PID</span>
+              <span class="setting-value" x-text="processStatus.pid || '--'"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Uptime</span>
+              <span class="setting-value" x-text="formatUptime(processStatus.uptime_seconds)"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Supervisor</span>
+              <span class="setting-value"
+                    x-text="processStatus.supervisor ? (processStatus.supervisor.kind === 'systemd-user' ? 'systemd --user' : 'unmanaged') : '--'"></span>
+            </div>
+            <div class="setting-row" x-show="processStatus.supervisor && processStatus.supervisor.active_state">
+              <span class="setting-label">Unit State</span>
+              <span class="setting-value"
+                    x-text="processStatus.supervisor ? ((processStatus.supervisor.active_state || '--') + ' / ' + (processStatus.supervisor.sub_state || '--')) : '--'"></span>
+            </div>
+            <div class="setting-row" x-show="!processStatus.can_control && processStatus.control_reason">
+              <span class="setting-label" style="align-self:flex-start">Note</span>
+              <span class="setting-value" style="font-size:0.85em;text-align:right;max-width:260px"
+                    x-text="processStatus.control_reason"></span>
+            </div>
+          </div>
+          <div class="header-controls" style="margin-top:12px;gap:8px">
+            <button class="btn btn-success"
+                    :disabled="!processStatus.can_control || processActionBusy"
+                    @click="processAction('start')">Start</button>
+            <button class="btn btn-danger"
+                    :disabled="!processStatus.can_control || processActionBusy"
+                    @click="confirmProcessAction('stop')">Stop</button>
+            <button class="btn btn-primary"
+                    :disabled="!processStatus.can_control || processActionBusy"
+                    @click="confirmProcessAction('restart')">Restart</button>
+          </div>
+          <div x-show="processActionMessage" style="margin-top:8px;font-size:0.9em;color:#8b949e"
+               x-text="processActionMessage"></div>
+        </div>
+
         <!-- Scanner Status -->
         <div class="card">
           <div class="card-header">
@@ -437,6 +499,14 @@
             <div class="setting-row">
               <span class="setting-label">Backend</span>
               <span class="setting-value" x-text="scannerStatus.backend || '--'"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Scanner Device</span>
+              <span class="setting-value" x-text="scannerStatus.scanner_device || '--'"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Tuner Device</span>
+              <span class="setting-value" x-text="scannerStatus.tuner_device || '--'"></span>
             </div>
           </div>
         </div>
@@ -454,6 +524,38 @@
             <div class="setting-row">
               <span class="setting-label">WebSocket Clients</span>
               <span class="setting-value" x-text="statusData.ws_clients ?? '--'"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Scanning SDR</span>
+              <span class="setting-value" x-text="statusData.device_status && statusData.device_status.scanner ? statusData.device_status.scanner.label : '--'"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Scanner Driver</span>
+              <span class="setting-value" x-text="statusData.device_status && statusData.device_status.scanner ? statusData.device_status.scanner.driver : '--'"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Scanner Serial</span>
+              <span class="setting-value" x-text="statusData.device_status && statusData.device_status.scanner ? statusData.device_status.scanner.serial : '--'"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Scanner Status</span>
+              <span class="setting-value" x-text="statusData.device_status && statusData.device_status.scanner ? statusData.device_status.scanner.status : '--'"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Gain</span>
+              <span class="setting-value" x-text="statusData.device_status && statusData.device_status.scanner && statusData.device_status.scanner.gain_db != null ? statusData.device_status.scanner.gain_db + ' dB' : '--'"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Sample Rate</span>
+              <span class="setting-value" x-text="statusData.device_status && statusData.device_status.scanner && statusData.device_status.scanner.sample_rate_hz ? (statusData.device_status.scanner.sample_rate_hz / 1e6).toFixed(3) + ' MS/s' : '--'"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Tuner / Player</span>
+              <span class="setting-value" x-text="statusData.device_status && statusData.device_status.tuner ? statusData.device_status.tuner.label : '--'"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Tuner Status</span>
+              <span class="setting-value" x-text="statusData.device_status && statusData.device_status.tuner ? statusData.device_status.tuner.status : '--'"></span>
             </div>
           </div>
         </div>
@@ -571,19 +673,33 @@
         </div>
 
         <!-- Scan Profiles -->
-        <div class="card">
+        <div class="card" :style="editSettings.scan_ranges.length > 0 ? 'opacity:0.55' : ''">
           <div class="card-header">
             <h3>Scan Profiles</h3>
+            <span class="badge"
+                  :class="editSettings.scan_ranges.length > 0 ? 'badge-orange' : 'badge-green'"
+                  x-text="editSettings.scan_ranges.length > 0 ? 'Inactive' : 'Active'"></span>
           </div>
           <div class="settings-list">
-            <div style="padding:8px 12px;display:flex;flex-wrap:wrap;gap:8px">
+            <div class="setting-row" style="font-size:0.85em;color:#8b949e;line-height:1.4">
+              Profiles supply a sweep plan only when the Scan Ranges list above is empty.
+              As soon as you add a range, profiles are ignored — the Scan Ranges list becomes
+              the single source of truth.
+            </div>
+            <div class="switch-list">
               <template x-for="profile in availableScanProfiles" :key="profile.key">
-                <button class="btn btn-small"
-                        :style="editSettings.scan_profiles.includes(profile.key) ? 'background:#1f6feb;color:#fff' : ''"
-                        @click="toggleScanProfile(profile.key)"
-                        :title="profile.description"
-                        x-text="profile.label">
-                </button>
+                <label class="switch-row" :title="profile.description">
+                  <span class="switch-copy">
+                    <span class="switch-label" x-text="profile.label"></span>
+                    <span class="switch-description" x-text="profile.description"></span>
+                  </span>
+                  <span class="switch-control">
+                    <input type="checkbox"
+                           :checked="editSettings.scan_profiles.includes(profile.key)"
+                           @change="toggleScanProfile(profile.key)">
+                    <span class="switch-slider"></span>
+                  </span>
+                </label>
               </template>
             </div>
             <div class="setting-row" x-show="availableScanProfiles.length === 0">
@@ -595,7 +711,7 @@
         <!-- Scan Ranges (editable) -->
         <div class="card">
           <div class="card-header">
-            <h3>Custom Scan Ranges</h3>
+            <h3>Scan Ranges</h3>
             <div style="display:flex;gap:6px">
               <button class="btn btn-small btn-primary" @click="addScanRange()">+ Custom</button>
               <button class="btn btn-small" @click="showDefaultRanges = !showDefaultRanges"
@@ -637,7 +753,7 @@
               </div>
             </template>
             <div class="setting-row" x-show="editSettings.scan_ranges.length === 0">
-              <span class="setting-label">No custom ranges configured. Enabled scan profiles still contribute their own prioritized ranges.</span>
+              <span class="setting-label">No ranges configured. Scan Profiles below will supply the sweep plan until you add one.</span>
             </div>
           </div>
         </div>
@@ -656,6 +772,13 @@
                 <template x-for="d in (settings.devices ? (settings.devices.discovered || []) : [])" :key="d.serial">
                   <option :value="d.serial" x-text="d.label || d.serial"></option>
                 </template>
+                <!-- Keep a stable option for a persisted device that is not currently detected
+                     so the select stays bound to the saved preference. -->
+                <template x-if="editSettings.scanner_device && editSettings.scanner_device !== 'none'
+                                && !(settings.devices && (settings.devices.discovered || []).some(d => d.serial === editSettings.scanner_device))">
+                  <option :value="editSettings.scanner_device"
+                          x-text="editSettings.scanner_device + ' (not detected)'"></option>
+                </template>
               </select>
             </div>
             <div class="setting-row">
@@ -665,6 +788,11 @@
                 <option value="none">None</option>
                 <template x-for="g in (settings.devices ? (settings.devices.gqrx_instances || []) : [])" :key="g.host + ':' + g.port">
                   <option :value="g.host + ':' + g.port" x-text="g.host + ':' + g.port"></option>
+                </template>
+                <template x-if="editSettings.tuner_device && editSettings.tuner_device !== 'none'
+                                && !(settings.devices && (settings.devices.gqrx_instances || []).some(g => (g.host + ':' + g.port) === editSettings.tuner_device))">
+                  <option :value="editSettings.tuner_device"
+                          x-text="editSettings.tuner_device + ' (not detected)'"></option>
                 </template>
               </select>
             </div>

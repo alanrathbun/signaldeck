@@ -12,6 +12,9 @@ class SignalInfo:
     modulation: str
     sample_rate: float = 2_000_000
     protocol_hint: str = ""
+    signal_class: str = "unknown"
+    content_confidence: float = 0.0
+    signal_features: dict = field(default_factory=dict)
 
 
 @dataclass

@@ -5,6 +5,10 @@ devices:
   gain: 40  # dB, overridden per device if needed
   scanner_device: null      # serial or driver of SDR to use for scanning (null = first available)
   gqrx_auto_detect: true   # try connecting to gqrx on localhost:7356
+  gqrx_auto_start: true    # launch local gqrx if localhost:7356 is not available
+  gqrx_command: []         # optional explicit command, e.g. ["gqrx", "-e"]
+  gqrx_config_path: "~/.config/gqrx/default.conf"
+  gqrx_startup_timeout_s: 12
   gqrx_instances: []        # additional gqrx instances: [{host: "192.168.1.50", port: 7356}]
 
 scanner:
@@ -18,17 +22,10 @@ scanner:
   ism_burst_duration_ms: 350
   ism_burst_cooldown_s: 20
   ism_max_bursts_per_sweep: 3
+  rtl_safe_defaults: true
   scan_profiles:
-    - likely_local_voice
-    - civil_aircraft
-    - marine_weather
-    - digital_signal_hunting
-  sweep_ranges:
-    - label: "VHF Low"
-      start_mhz: 25
-      end_mhz: 54
-      step_khz: 100
-      priority: 8
+    - rtl_priority_search
+  sweep_ranges: []
 
 audio:
   sample_rate: 48000

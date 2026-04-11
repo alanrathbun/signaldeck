@@ -120,6 +120,9 @@ class Database:
             await self._conn.close()
             self._conn = None
 
+    async def commit(self) -> None:
+        await self._conn.commit()
+
     async def list_tables(self) -> list[str]:
         cursor = await self._conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
@@ -127,7 +130,7 @@ class Database:
         rows = await cursor.fetchall()
         return [row["name"] for row in rows]
 
-    async def upsert_signal(self, signal: Signal) -> int:
+    async def upsert_signal(self, signal: Signal, *, commit: bool = True) -> int:
         existing = await self.get_signal_by_frequency(signal.frequency, tolerance_hz=1000)
         if existing and existing.id is not None:
             await self._conn.execute(
@@ -148,7 +151,8 @@ class Database:
                     existing.id,
                 ),
             )
-            await self._conn.commit()
+            if commit:
+                await self._conn.commit()
             return existing.id
 
         cursor = await self._conn.execute(
@@ -169,7 +173,8 @@ class Database:
                 json.dumps(signal.classification_data),
             ),
         )
-        await self._conn.commit()
+        if commit:
+            await self._conn.commit()
         return cursor.lastrowid
 
     async def get_signal_by_id(self, signal_id: int) -> Signal | None:
@@ -237,7 +242,7 @@ class Database:
             for row in rows
         ]
 
-    async def insert_activity(self, entry: ActivityEntry) -> int:
+    async def insert_activity(self, entry: ActivityEntry, *, commit: bool = True) -> int:
         cursor = await self._conn.execute(
             """INSERT INTO activity_log
                (signal_id, timestamp, duration, strength, decoder_used,
@@ -255,7 +260,8 @@ class Database:
                 json.dumps(entry.raw_result),
             ),
         )
-        await self._conn.commit()
+        if commit:
+            await self._conn.commit()
         return cursor.lastrowid
 
     async def insert_bookmark(self, bookmark) -> int:
@@ -301,6 +307,33 @@ class Database:
                 audio_path=row["audio_path"],
                 raw_result=json.loads(row["raw_result"]),
             )
+            for row in rows
+        ]
+
+    async def get_recordings(self, limit: int = 200) -> list[dict]:
+        cursor = await self._conn.execute(
+            """SELECT *
+               FROM recordings
+               ORDER BY timestamp DESC
+               LIMIT ?""",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "id": row["id"],
+                "activity_id": row["activity_id"],
+                "signal_id": row["signal_id"],
+                "frequency": row["frequency"],
+                "frequency_hz": row["frequency"],
+                "frequency_mhz": round(row["frequency"] / 1e6, 4),
+                "timestamp": row["timestamp"],
+                "duration": row["duration"],
+                "format": row["format"],
+                "file_path": row["file_path"],
+                "file_size": row["file_size"],
+                "transcription": row["transcription"],
+            }
             for row in rows
         ]
 

@@ -39,6 +39,9 @@ async def signal_enrichment():
             "last_seen": s.last_seen.isoformat(),
             "hit_count": s.hit_count,
             "confidence": s.confidence,
+            "signal_class": s.classification_data.get("signal_class"),
+            "content_confidence": s.classification_data.get("content_confidence"),
+            "signal_features": s.classification_data.get("signal_features"),
         }
         if s.id and s.id in activity_by_signal:
             entry["last_activity"] = activity_by_signal[s.id]
@@ -88,6 +91,9 @@ async def list_signals(limit: int = Query(default=200, ge=1, le=5000),
             "power": s.avg_strength,
             "avg_strength": s.avg_strength,
             "confidence": s.confidence,
+            "signal_class": s.classification_data.get("signal_class"),
+            "content_confidence": s.classification_data.get("content_confidence"),
+            "signal_features": s.classification_data.get("signal_features"),
         }
         for s in signals
     ]

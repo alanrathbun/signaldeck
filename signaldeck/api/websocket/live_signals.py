@@ -13,8 +13,8 @@ _last_broadcast: dict[int, float] = {}
 _BROADCAST_INTERVAL_S = 2.0  # minimum seconds between updates for the same frequency
 
 
-def signal_broadcast(frequency_hz, bandwidth_hz, power, modulation="unknown", protocol=None):
-    return {
+def signal_broadcast(frequency_hz, bandwidth_hz, power, modulation="unknown", protocol=None, **extra):
+    msg = {
         "type": "signal",
         "frequency": frequency_hz,
         "frequency_hz": frequency_hz,
@@ -25,10 +25,29 @@ def signal_broadcast(frequency_hz, bandwidth_hz, power, modulation="unknown", pr
         "modulation": modulation,
         "protocol": protocol,
     }
+    msg.update(extra)
+    return msg
+
+
+def signal_batch_broadcast(signals: list[dict]):
+    return {
+        "type": "signal_batch",
+        "signals": signals,
+    }
 
 
 async def broadcast(message: dict):
     global _clients
+
+    if message.get("type") == "signal_batch":
+        disconnected = set()
+        for ws in list(_clients):
+            try:
+                await ws.send_json(message)
+            except Exception:
+                disconnected.add(ws)
+        _clients -= disconnected
+        return
 
     # Throttle per-frequency updates to avoid overwhelming the UI
     freq_key = int(message.get("frequency_hz", 0) / 1000)  # round to kHz

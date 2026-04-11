@@ -41,10 +41,13 @@ async def ws_audio(websocket: WebSocket):
             elif data.get("type") == "subscribe":
                 freq = data.get("frequency_hz", 0)
                 modulation = data.get("modulation")
+                volume = data.get("volume")
                 _audio_clients[websocket] = freq
                 _audio_request["frequency_hz"] = freq
                 _audio_request["active"] = True
                 _audio_request["modulation"] = modulation
+                if volume is not None:
+                    _audio_request["volume"] = volume
                 logger.debug("Audio subscribe: %.3f MHz (mod=%s)", freq / 1e6, modulation)
                 await websocket.send_json({"type": "subscribed", "frequency_hz": freq})
             elif data.get("type") == "unsubscribe":

@@ -17,12 +17,15 @@ class GqrxClient:
         self.timeout = timeout
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
+        self._lock = asyncio.Lock()
 
     @property
     def is_connected(self) -> bool:
         return self._writer is not None and not self._writer.is_closing()
 
     async def connect(self) -> None:
+        if self.is_connected:
+            return
         try:
             self._reader, self._writer = await asyncio.wait_for(
                 asyncio.open_connection(self.host, self.port),
@@ -31,6 +34,21 @@ class GqrxClient:
             logger.info("Connected to gqrx at %s:%d", self.host, self.port)
         except (OSError, asyncio.TimeoutError) as e:
             raise GqrxConnectionError(f"Cannot connect to gqrx at {self.host}:{self.port}: {e}") from e
+
+    async def ensure_connected(self) -> None:
+        if not self.is_connected:
+            await self.connect()
+
+    async def _reset_connection(self) -> None:
+        writer = self._writer
+        self._writer = None
+        self._reader = None
+        if writer is not None:
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
 
     async def disconnect(self) -> None:
         if self._writer is not None:
@@ -49,23 +67,31 @@ class GqrxClient:
             logger.info("Disconnected from gqrx")
 
     async def _send_command(self, cmd: str) -> str:
-        if not self.is_connected:
-            raise GqrxConnectionError("Not connected to gqrx")
-        try:
-            logger.debug("gqrx >> %s", cmd)
-            self._writer.write(f"{cmd}\n".encode())
-            await self._writer.drain()
-            line = await asyncio.wait_for(
-                self._reader.readline(),
-                timeout=self.timeout,
-            )
-            resp = line.decode().strip()
-            logger.debug("gqrx << %s", resp)
-            return resp
-        except (OSError, asyncio.TimeoutError) as e:
-            self._writer = None
-            self._reader = None
-            raise GqrxConnectionError(f"Command '{cmd}' failed: {e}") from e
+        async with self._lock:
+            last_error = None
+            for attempt in range(2):
+                try:
+                    await self.ensure_connected()
+                    logger.debug("gqrx >> %s", cmd)
+                    self._writer.write(f"{cmd}\n".encode())
+                    await self._writer.drain()
+                    line = await asyncio.wait_for(
+                        self._reader.readline(),
+                        timeout=self.timeout,
+                    )
+                    if not line:
+                        raise GqrxConnectionError("gqrx closed the connection")
+                    resp = line.decode().strip()
+                    logger.debug("gqrx << %s", resp)
+                    return resp
+                except (OSError, asyncio.TimeoutError, GqrxConnectionError) as e:
+                    last_error = e
+                    await self._reset_connection()
+                    if attempt == 0:
+                        logger.warning("gqrx command failed, retrying after reconnect: %s", e)
+                        continue
+                    raise GqrxConnectionError(f"Command '{cmd}' failed: {e}") from e
+            raise GqrxConnectionError(f"Command '{cmd}' failed: {last_error}")
 
     async def get_frequency(self) -> int:
         resp = await self._send_command("f")

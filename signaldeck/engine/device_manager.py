@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -54,23 +55,36 @@ class SDRDevice:
             self._dev.deactivateStream(self._stream)
             logger.debug("Stream deactivated")
 
-    def read_samples(self, num_samples: int) -> np.ndarray | None:
-        buf = np.zeros(num_samples, dtype=np.complex64)
-        status = self._dev.readStream(self._stream, [buf], num_samples)
-        if hasattr(status, "ret"):
-            ret_code = status.ret
-        elif isinstance(status, tuple):
-            ret_code = status[0]
-        else:
-            ret_code = status
-        if ret_code < 0:
-            self._consecutive_errors = getattr(self, "_consecutive_errors", 0) + 1
-            # Log first error and then every 50th to avoid spam
-            if self._consecutive_errors == 1 or self._consecutive_errors % 50 == 0:
-                logger.warning("Read error: %d (occurred %d times)", ret_code, self._consecutive_errors)
-            return None
-        self._consecutive_errors = 0
-        return buf[:ret_code] if ret_code < num_samples else buf
+    def read_samples(self, num_samples: int, retries: int = 3) -> np.ndarray | None:
+        last_ret_code = None
+        for attempt in range(max(1, retries)):
+            buf = np.zeros(num_samples, dtype=np.complex64)
+            status = self._dev.readStream(self._stream, [buf], num_samples)
+            if hasattr(status, "ret"):
+                ret_code = status.ret
+            elif isinstance(status, tuple):
+                ret_code = status[0]
+            else:
+                ret_code = status
+
+            if ret_code >= 0:
+                self._consecutive_errors = 0
+                return buf[:ret_code] if ret_code < num_samples else buf
+
+            last_ret_code = ret_code
+            if attempt < retries - 1:
+                time.sleep(0.01)
+
+        self._consecutive_errors = getattr(self, "_consecutive_errors", 0) + 1
+        # Log first error and then every 50th to avoid spam
+        if self._consecutive_errors == 1 or self._consecutive_errors % 50 == 0:
+            logger.warning(
+                "Read error: %d after %d attempts (occurred %d times)",
+                last_ret_code,
+                retries,
+                self._consecutive_errors,
+            )
+        return None
 
     def close(self) -> None:
         if self._stream is not None:
@@ -131,13 +145,20 @@ class DeviceManager:
         gqrx_host: str = "localhost",
         gqrx_port: int = 7356,
         gqrx_instances: list[dict] | None = None,
+        gqrx_retries: int = 5,
+        gqrx_retry_delay_s: float = 0.5,
     ) -> list[DeviceInfo]:
         """Discover SDR devices including gqrx instances."""
         devices = self.enumerate()  # existing SoapySDR discovery
 
         # Try auto-detecting gqrx on the default or configured host:port
         if gqrx_auto_detect:
-            info = await self._probe_gqrx(gqrx_host, gqrx_port)
+            info = await self._probe_gqrx_with_retry(
+                gqrx_host,
+                gqrx_port,
+                retries=gqrx_retries,
+                retry_delay_s=gqrx_retry_delay_s,
+            )
             if info:
                 devices.append(info)
 
@@ -147,11 +168,34 @@ class DeviceManager:
             port = inst.get("port", 7356)
             if host == gqrx_host and port == gqrx_port:
                 continue  # already checked above
-            info = await self._probe_gqrx(host, port)
+            info = await self._probe_gqrx_with_retry(
+                host,
+                port,
+                retries=max(1, gqrx_retries // 2),
+                retry_delay_s=gqrx_retry_delay_s,
+            )
             if info:
                 devices.append(info)
 
         return devices
+
+    async def _probe_gqrx_with_retry(
+        self,
+        host: str,
+        port: int,
+        *,
+        retries: int = 5,
+        retry_delay_s: float = 0.5,
+    ) -> DeviceInfo | None:
+        import asyncio
+
+        for attempt in range(max(1, retries)):
+            info = await self._probe_gqrx(host, port)
+            if info:
+                return info
+            if attempt < retries - 1:
+                await asyncio.sleep(retry_delay_s)
+        return None
 
     async def _probe_gqrx(self, host: str, port: int) -> DeviceInfo | None:
         """Try connecting to a gqrx instance and return DeviceInfo if it responds."""

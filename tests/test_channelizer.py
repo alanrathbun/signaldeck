@@ -32,6 +32,9 @@ class TestChannelize:
     def test_fm_broadcast_snaps_down(self):
         assert channelize(99_140_000) == 99_100_000
 
+    def test_fm_broadcast_lower_edge_clamps_to_87_9(self):
+        assert channelize(87_680_000) == 87_900_000
+
     # --- Airband (118-137 MHz, 25 kHz step) ---
     def test_airband(self):
         assert channelize(121_512_000) == 121_500_000

@@ -23,7 +23,7 @@ class AudioPlayer {
   /**
    * Subscribe to audio for a given frequency (Hz).
    */
-  subscribe(freqHz, modulation) {
+  subscribe(freqHz, modulation, volume = null) {
     this.stop(); // Clean up any existing connection
 
     // Create AudioContext on user gesture
@@ -90,6 +90,7 @@ class AudioPlayer {
         // Subscribe to the desired frequency
         const msg = { type: 'subscribe', frequency_hz: freqHz };
         if (modulation) msg.modulation = modulation;
+        if (volume !== null && volume !== undefined) msg.volume = volume;
         this.ws.send(JSON.stringify(msg));
         this.playing = true;
         this.subscribedFreq = freqHz;

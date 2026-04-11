@@ -41,6 +41,7 @@ class DetectedSignal:
     avg_power: float
     bin_start: int
     bin_end: int
+    features: dict | None = None
 
 
 def compute_power_spectrum(samples: NDArray[np.complex64], fft_size: int = 1024) -> NDArray[np.float64]:
@@ -63,6 +64,7 @@ def find_signals_in_spectrum(
 ) -> list[DetectedSignal]:
     n = len(power_db)
     hz_per_bin = sample_rate / n
+    noise_floor = estimate_noise_floor(power_db)
 
     above = power_db > squelch_db
     signals: list[DetectedSignal] = []
@@ -74,14 +76,85 @@ def find_signals_in_spectrum(
             start = i
             in_signal = True
         elif not above[i] and in_signal:
-            _add_signal(signals, power_db, start, i, center_freq_hz, sample_rate, n, hz_per_bin)
+            _add_signal(signals, power_db, start, i, center_freq_hz, sample_rate, n, hz_per_bin, noise_floor)
             in_signal = False
 
     if in_signal:
-        _add_signal(signals, power_db, start, n, center_freq_hz, sample_rate, n, hz_per_bin)
+        _add_signal(signals, power_db, start, n, center_freq_hz, sample_rate, n, hz_per_bin, noise_floor)
+
+    if FM_BROADCAST_LOW <= center_freq_hz <= FM_BROADCAST_HIGH:
+        fm_signal = _detect_broadcast_fm_signal(
+            power_db=power_db,
+            center_freq_hz=center_freq_hz,
+            sample_rate=sample_rate,
+            n=n,
+            hz_per_bin=hz_per_bin,
+            noise_floor=noise_floor,
+            squelch_db=squelch_db,
+            existing=signals,
+        )
+        if fm_signal is not None:
+            signals.append(fm_signal)
 
     signals.sort(key=lambda s: s.peak_power, reverse=True)
     return signals
+
+
+def _detect_broadcast_fm_signal(
+    power_db: NDArray[np.float64],
+    center_freq_hz: float,
+    sample_rate: float,
+    n: int,
+    hz_per_bin: float,
+    noise_floor: float,
+    squelch_db: float,
+    existing: list[DetectedSignal],
+) -> DetectedSignal | None:
+    # If the generic detector already found a wide signal here, do not add a duplicate.
+    for sig in existing:
+        if sig.bandwidth_hz >= 80_000:
+            return None
+
+    window_bins = max(48, int(round(150_000 / hz_per_bin)))
+    if window_bins >= n:
+        return None
+
+    kernel = np.ones(window_bins, dtype=np.float64) / window_bins
+    smoothed = np.convolve(power_db, kernel, mode="valid")
+    best_start = int(np.argmax(smoothed))
+    best_avg = float(smoothed[best_start])
+    best_end = min(n, best_start + window_bins)
+    segment = power_db[best_start:best_end]
+    if len(segment) == 0:
+        return None
+
+    peak_power = float(np.max(segment))
+    prominence_db = best_avg - noise_floor
+    if prominence_db < 4.5 or peak_power < (squelch_db + 2.0):
+        return None
+
+    peak_bin = best_start + int(np.argmax(segment))
+    freq = center_freq_hz + (peak_bin - n / 2) * hz_per_bin
+    bandwidth = (best_end - best_start) * hz_per_bin
+    peak_to_avg_db = peak_power - best_avg
+    occupied_bins = max(1, best_end - best_start)
+    flatness = float(np.std(segment)) / max(1.0, abs(best_avg))
+
+    return DetectedSignal(
+        frequency_hz=freq,
+        bandwidth_hz=bandwidth,
+        peak_power=peak_power,
+        avg_power=best_avg,
+        bin_start=best_start,
+        bin_end=best_end,
+        features={
+            "prominence_db": prominence_db,
+            "peak_to_avg_db": peak_to_avg_db,
+            "occupied_bins": occupied_bins,
+            "spectral_flatness": flatness,
+            "relative_bandwidth": bandwidth / sample_rate if sample_rate else 0.0,
+        },
+    )
 
 
 def _add_signal(
@@ -93,19 +166,32 @@ def _add_signal(
     sample_rate: float,
     n: int,
     hz_per_bin: float,
+    noise_floor: float,
 ) -> None:
     segment = power_db[bin_start:bin_end]
     peak_bin = bin_start + int(np.argmax(segment))
     freq = center_freq_hz + (peak_bin - n / 2) * hz_per_bin
     bandwidth = (bin_end - bin_start) * hz_per_bin
+    peak_power = float(np.max(segment))
+    avg_power = float(np.mean(segment))
+    prominence_db = peak_power - noise_floor
+    flatness = float(np.std(segment)) / max(1.0, abs(avg_power))
+    occupied_bins = max(1, bin_end - bin_start)
 
     signals.append(DetectedSignal(
         frequency_hz=freq,
         bandwidth_hz=bandwidth,
-        peak_power=float(np.max(segment)),
-        avg_power=float(np.mean(segment)),
+        peak_power=peak_power,
+        avg_power=avg_power,
         bin_start=bin_start,
         bin_end=bin_end,
+        features={
+            "prominence_db": prominence_db,
+            "peak_to_avg_db": peak_power - avg_power,
+            "occupied_bins": occupied_bins,
+            "spectral_flatness": flatness,
+            "relative_bandwidth": bandwidth / sample_rate if sample_rate else 0.0,
+        },
     ))
 
 
@@ -127,15 +213,25 @@ class FrequencyScanner:
         self._dwell_time = dwell_time_s
         self._running = False
 
-    async def sweep_once(self, fft_callback=None, rds_callback=None,
-                         rds_sample_count: int = 0) -> list[DetectedSignal]:
+    async def sweep_once(
+        self,
+        fft_callback=None,
+        rds_callback=None,
+        rds_sample_count: int = 0,
+        signal_callback=None,
+        progress_callback=None,
+    ) -> list[DetectedSignal]:
         all_signals: list[DetectedSignal] = []
         self._device.set_sample_rate(self._sample_rate)
         self._device.start_stream()
 
         try:
             for scan_range in self._scan_ranges:
-                for freq in scan_range.frequencies():
+                freqs = scan_range.frequencies()
+                total_steps = len(freqs)
+                for step_index, freq in enumerate(freqs):
+                    if progress_callback is not None:
+                        await progress_callback(scan_range, float(freq), step_index, total_steps)
                     self._device.tune(freq)
                     await asyncio.sleep(self._dwell_time)
 
@@ -159,6 +255,8 @@ class FrequencyScanner:
                         squelch_db=squelch,
                     )
                     all_signals.extend(signals)
+                    if signals and signal_callback is not None:
+                        await signal_callback(signals)
                     # Read extra IQ for RDS decoding on FM broadcast frequencies
                     if (rds_callback and rds_sample_count > 0
                             and FM_BROADCAST_LOW <= freq <= FM_BROADCAST_HIGH):
@@ -175,7 +273,7 @@ class FrequencyScanner:
 
         return all_signals
 
-    async def strength_sweep_once(self, fft_callback=None) -> list[DetectedSignal]:
+    async def strength_sweep_once(self, fft_callback=None, signal_callback=None) -> list[DetectedSignal]:
         """Sweep by reading signal strength at each frequency (for gqrx backend).
 
         Instead of computing FFT from IQ samples, tunes to each frequency and
@@ -213,11 +311,13 @@ class FrequencyScanner:
                         bin_start=i,
                         bin_end=i + 1,
                     ))
+            if all_signals and signal_callback is not None:
+                await signal_callback(list(all_signals))
 
         all_signals.sort(key=lambda s: s.peak_power, reverse=True)
         return all_signals
 
-    async def bookmark_scan_once(self, bookmarks, fft_callback=None) -> list[DetectedSignal]:
+    async def bookmark_scan_once(self, bookmarks, fft_callback=None, signal_callback=None) -> list[DetectedSignal]:
         """Scan a list of bookmarked frequencies by reading signal strength.
 
         Args:
@@ -260,6 +360,8 @@ class FrequencyScanner:
                     bin_start=i,
                     bin_end=i + 1,
                 ))
+        if signals and signal_callback is not None:
+            await signal_callback(list(signals))
 
         signals.sort(key=lambda s: s.peak_power, reverse=True)
         return signals

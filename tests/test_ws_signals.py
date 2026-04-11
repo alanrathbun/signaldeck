@@ -1,7 +1,7 @@
 import pytest
 from starlette.testclient import TestClient
 from signaldeck.api.server import create_app
-from signaldeck.api.websocket.live_signals import signal_broadcast
+from signaldeck.api.websocket.live_signals import signal_broadcast, signal_batch_broadcast
 
 
 @pytest.fixture
@@ -38,3 +38,9 @@ def test_signal_broadcast_function():
     )
     assert msg["type"] == "signal"
     assert msg["frequency_mhz"] == 98.5
+
+
+def test_signal_batch_broadcast_function():
+    msg = signal_batch_broadcast([signal_broadcast(98.5e6, 200e3, -30.0)])
+    assert msg["type"] == "signal_batch"
+    assert len(msg["signals"]) == 1

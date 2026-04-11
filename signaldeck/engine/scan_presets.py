@@ -5,11 +5,27 @@ from copy import deepcopy
 
 SCAN_PROFILE_CATALOG: list[dict] = [
     {
+        "key": "rtl_priority_search",
+        "label": "RTL Priority Search",
+        "description": "Tighter, high-yield RTL-SDR coverage for common local voice and practical digital bands.",
+        "ranges": [
+            {"label": "NOAA Weather", "start_mhz": 162.4, "end_mhz": 162.55, "step_khz": 25, "priority": 22},
+            {"label": "Marine VHF", "start_mhz": 156.0, "end_mhz": 163.0, "step_khz": 25, "priority": 21},
+            {"label": "Airband Voice", "start_mhz": 118.0, "end_mhz": 137.0, "step_khz": 25, "priority": 20},
+            {"label": "Broadcast FM", "start_mhz": 88.0, "end_mhz": 108.0, "step_khz": 200, "priority": 23},
+            {"label": "2m Amateur", "start_mhz": 144.0, "end_mhz": 148.0, "step_khz": 25, "priority": 19},
+            {"label": "MURS", "start_mhz": 151.82, "end_mhz": 154.6, "step_khz": 12.5, "priority": 18},
+            {"label": "Pager / POCSAG", "start_mhz": 152.0, "end_mhz": 159.0, "step_khz": 12.5, "priority": 18},
+            {"label": "433 MHz ISM", "start_mhz": 433.0, "end_mhz": 435.0, "step_khz": 25, "priority": 19},
+            {"label": "FRS/GMRS", "start_mhz": 462.55, "end_mhz": 467.725, "step_khz": 12.5, "priority": 18},
+        ],
+    },
+    {
         "key": "likely_local_voice",
         "label": "Likely Local Voice",
         "description": "Fast coverage of the most common local voice services and repeaters.",
         "ranges": [
-            {"label": "Broadcast FM", "start_mhz": 88.0, "end_mhz": 108.0, "step_khz": 200, "priority": 20},
+            {"label": "Broadcast FM", "start_mhz": 88.0, "end_mhz": 108.0, "step_khz": 200, "priority": 23},
             {"label": "Airband Voice", "start_mhz": 118.0, "end_mhz": 137.0, "step_khz": 25, "priority": 19},
             {"label": "2m Amateur", "start_mhz": 144.0, "end_mhz": 148.0, "step_khz": 25, "priority": 17},
             {"label": "Marine VHF", "start_mhz": 156.0, "end_mhz": 163.0, "step_khz": 25, "priority": 19},
@@ -67,10 +83,7 @@ SCAN_PROFILE_CATALOG: list[dict] = [
 ]
 
 DEFAULT_SCAN_PROFILE_KEYS = [
-    "likely_local_voice",
-    "civil_aircraft",
-    "marine_weather",
-    "digital_signal_hunting",
+    "rtl_priority_search",
 ]
 
 
@@ -86,26 +99,37 @@ def resolve_scan_profile_keys(scanner_config: dict) -> list[str]:
 
 
 def resolve_sweep_ranges(scanner_config: dict) -> list[dict]:
-    ranges = [deepcopy(r) for r in scanner_config.get("sweep_ranges", [])]
-    enabled = set(resolve_scan_profile_keys(scanner_config))
-    for profile in SCAN_PROFILE_CATALOG:
-        if profile["key"] not in enabled:
-            continue
-        for rng in profile["ranges"]:
-            ranges.append(deepcopy(rng))
+    """Return the final list of ranges to sweep.
 
-    deduped: dict[tuple[float, float, float, str], dict] = {}
+    Precedence rule: when the user has any explicit `sweep_ranges`, those
+    are authoritative and Scan Profiles are ignored. Profiles only fill in
+    when `sweep_ranges` is empty — that keeps the "first-run, pick a
+    profile" workflow working while matching the mental model that the
+    Scan Ranges list in Settings is exactly what gets scanned.
+    """
+    ranges = [deepcopy(r) for r in scanner_config.get("sweep_ranges", [])]
+    if not ranges:
+        enabled = set(resolve_scan_profile_keys(scanner_config))
+        for profile in SCAN_PROFILE_CATALOG:
+            if profile["key"] not in enabled:
+                continue
+            for rng in profile["ranges"]:
+                ranges.append(deepcopy(rng))
+
+    deduped: dict[tuple[float, float, float], dict] = {}
     for rng in ranges:
         normalized = _normalize_range(rng)
         dedupe_key = (
             normalized["start_mhz"],
             normalized["end_mhz"],
             normalized["step_khz"],
-            normalized.get("label", ""),
         )
         existing = deduped.get(dedupe_key)
         if existing is None or normalized["priority"] > existing["priority"]:
             deduped[dedupe_key] = normalized
+            continue
+        if existing and not existing.get("label") and normalized.get("label"):
+            existing["label"] = normalized["label"]
 
     resolved = list(deduped.values())
     resolved.sort(

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -125,6 +126,7 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
 
     from signaldeck.engine.device_manager import DeviceManager
     from signaldeck.engine.gqrx_device import GqrxDevice
+    from signaldeck.engine.gqrx_launcher import ensure_gqrx_running
     from signaldeck.engine.scanner import FrequencyScanner, ScanRange
     from signaldeck.storage.database import Database
 
@@ -150,8 +152,28 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
         # Discover devices
         mgr = DeviceManager()
         gqrx_cfg = cfg.get("devices", {})
+        gqrx_instances = gqrx_cfg.get("gqrx_instances", [])
+        default_gqrx = gqrx_instances[0] if gqrx_instances else {"host": "localhost", "port": 7356}
+        default_gqrx_host = default_gqrx.get("host", "localhost")
+        default_gqrx_port = int(default_gqrx.get("port", 7356))
+
+        if gqrx_cfg.get("gqrx_auto_detect", True):
+            await ensure_gqrx_running(
+                default_gqrx_host,
+                default_gqrx_port,
+                auto_start=gqrx_cfg.get("gqrx_auto_start", True),
+                command=gqrx_cfg.get("gqrx_command") or None,
+                config_path=os.path.expanduser(
+                    gqrx_cfg.get("gqrx_config_path", "~/.config/gqrx/default.conf")
+                ),
+                startup_timeout_s=float(gqrx_cfg.get("gqrx_startup_timeout_s", 12)),
+                probe_fn=lambda: mgr._probe_gqrx(default_gqrx_host, default_gqrx_port),
+            )
+
         available = await mgr.enumerate_async(
             gqrx_auto_detect=gqrx_cfg.get("gqrx_auto_detect", True),
+            gqrx_host=default_gqrx_host,
+            gqrx_port=default_gqrx_port,
             gqrx_instances=gqrx_cfg.get("gqrx_instances", []),
         )
 
@@ -168,6 +190,18 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
             {"host": d.serial.split(":")[0], "port": int(d.serial.split(":")[1])}
             for d in gqrx_devices
         ]
+        cfg["_runtime_devices"] = {
+            "scanner": None,
+            "tuner": None,
+            "available_sdrs": [
+                {"label": d.label, "driver": d.driver, "serial": d.serial}
+                for d in hw_devices
+            ],
+            "available_gqrx": [
+                {"label": d.label, "serial": d.serial}
+                for d in gqrx_devices
+            ],
+        }
 
         if not hw_devices and not gqrx_devices:
             logger.error("No devices found. Connect an SDR or start gqrx with remote control enabled.")
@@ -198,14 +232,34 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
         if scan_dev_info:
             try:
                 device = mgr.open(driver=scan_dev_info.driver, serial=scan_dev_info.serial)
-                # Test that we can actually use the device (USB interface may be busy)
-                device.start_stream()
-                test_buf = device.read_samples(1024)
-                device.stop_stream()
-                if test_buf is None:
-                    raise RuntimeError("Device opened but cannot read samples (USB busy?)")
                 device.set_gain(cfg["devices"]["gain"])
+                # Prime the stream, but do not fail startup on a transient first read.
+                try:
+                    device.start_stream()
+                    test_buf = device.read_samples(1024, retries=8)
+                    device.stop_stream()
+                    if test_buf is None:
+                        logger.warning(
+                            "SDR opened but initial read failed; continuing and letting the sweep loop retry"
+                        )
+                except Exception as stream_err:
+                    logger.warning(
+                        "SDR stream probe failed during startup; continuing with retries: %s",
+                        stream_err,
+                    )
+                    try:
+                        device.stop_stream()
+                    except Exception:
+                        pass
                 logger.info("Scanning with: %s (%s)", scan_dev_info.label, scan_dev_info.driver)
+                cfg["_runtime_devices"]["scanner"] = {
+                    "label": scan_dev_info.label,
+                    "driver": scan_dev_info.driver,
+                    "serial": scan_dev_info.serial,
+                    "gain_db": cfg["devices"]["gain"],
+                    "sample_rate_hz": 2_000_000,
+                    "status": "active",
+                }
             except Exception as e:
                 logger.warning("Cannot use SDR device: %s — falling back to gqrx-only mode", e)
                 try:
@@ -213,6 +267,12 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                 except Exception:
                     pass
                 device = None
+                cfg["_runtime_devices"]["scanner"] = {
+                    "label": scan_dev_info.label,
+                    "driver": scan_dev_info.driver,
+                    "serial": scan_dev_info.serial,
+                    "status": f"unavailable: {e}",
+                }
         if device is None:
             logger.info("No usable SoapySDR device — running in gqrx-only mode (no scanning)")
 
@@ -233,16 +293,35 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                 gqrx_host, gqrx_port_str = gd.serial.split(":")
                 gqrx_device = await mgr.open_gqrx(host=gqrx_host, port=int(gqrx_port_str))
                 logger.info("gqrx connected at %s — select a signal to tune", gd.serial)
+                cfg["_runtime_devices"]["tuner"] = {
+                    "label": gd.label,
+                    "driver": "gqrx",
+                    "serial": gd.serial,
+                    "host": gqrx_host,
+                    "port": int(gqrx_port_str),
+                    "status": "connected",
+                }
                 if not headless:
                     try:
                         from signaldeck.api.routes.scanner import _scanner_state
                         _scanner_state["backend"] = "both" if device else "gqrx"
                         _scanner_state["active_devices"] = (1 if device else 0) + 1
+                        _scanner_state["scanner_device"] = (
+                            cfg["_runtime_devices"]["scanner"]["label"]
+                            if cfg["_runtime_devices"].get("scanner") else None
+                        )
+                        _scanner_state["tuner_device"] = gd.label
                     except ImportError:
                         pass
             except Exception as e:
                 logger.warning("Could not connect to gqrx: %s", e)
                 gqrx_device = None
+                cfg["_runtime_devices"]["tuner"] = {
+                    "label": gd.label,
+                    "driver": "gqrx",
+                    "serial": gd.serial,
+                    "status": f"unavailable: {e}",
+                }
 
         # Set active_devices for SDR-only mode (no gqrx branch above)
         if device and not gqrx_device and not headless:
@@ -250,6 +329,11 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                 from signaldeck.api.routes.scanner import _scanner_state
                 _scanner_state["backend"] = "soapysdr"
                 _scanner_state["active_devices"] = 1
+                _scanner_state["scanner_device"] = (
+                    cfg["_runtime_devices"]["scanner"]["label"]
+                    if cfg["_runtime_devices"].get("scanner") else None
+                )
+                _scanner_state["tuner_device"] = None
             except ImportError:
                 pass
 
@@ -269,6 +353,7 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
         from signaldeck.engine.classifier import SignalClassifier
         from signaldeck.decoders.base import SignalInfo
         from signaldeck.decoders.ism import IsmDecoder, summarize_rtl433_json
+        from signaldeck.api.routes.scanner import _scanner_state
 
         classifier = SignalClassifier()
 
@@ -382,64 +467,144 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                     content=result.content,
                 )
 
+        pending_signal_queue: asyncio.Queue = asyncio.Queue()
+
         async def on_signals(signals):
             now = datetime.now(timezone.utc)
-            ism_candidates: list[tuple[int, SignalInfo, float]] = []
             for sig in signals:
-                # Filter out weak signals below the minimum strength threshold
                 if sig.peak_power < min_strength:
                     continue
-                # Snap to nearest standard channel frequency
-                freq_hz = channelize(sig.frequency_hz)
-                # Classify the signal
+                pending_signal_queue.put_nowait((sig, now))
+
+        async def on_scan_progress(scan_range, freq_hz: float, step_index: int, total_steps: int):
+            _scanner_state["current_range"] = {
+                "label": scan_range.label or f"{scan_range.start_hz / 1e6:.3f}-{scan_range.end_hz / 1e6:.3f} MHz",
+                "start_hz": scan_range.start_hz,
+                "end_hz": scan_range.end_hz,
+                "step_hz": scan_range.step_hz,
+                "frequency_hz": freq_hz,
+                "frequency_mhz": round(freq_hz / 1e6, 4),
+                "step_index": step_index + 1,
+                "step_count": total_steps,
+            }
+
+        def _fm_candidate_score(sig, classified: SignalInfo) -> tuple[float, float, float]:
+            wide_bonus = 1.0 if sig.bandwidth_hz >= 120_000 else 0.0
+            class_bonus = 1.0 if classified.signal_class == "broadcast_program" else 0.0
+            return (wide_bonus + class_bonus, sig.bandwidth_hz, sig.peak_power)
+
+        async def _signal_pipeline_worker():
+            while True:
+                first_item = await pending_signal_queue.get()
+                batch = [first_item]
+                batch_window_s = 0.2
+                batch_limit = 200
+                deadline = asyncio.get_running_loop().time() + batch_window_s
+                while len(batch) < batch_limit:
+                    timeout = deadline - asyncio.get_running_loop().time()
+                    if timeout <= 0:
+                        break
+                    try:
+                        item = await asyncio.wait_for(pending_signal_queue.get(), timeout=timeout)
+                    except asyncio.TimeoutError:
+                        break
+                    batch.append(item)
+                try:
+                    await _process_signal_batch(batch)
+                finally:
+                    for _ in batch:
+                        pending_signal_queue.task_done()
+
+        async def _process_signal_batch(batch: list[tuple[object, datetime]]) -> None:
+            now = batch[0][1]
+            ism_candidates: list[tuple[int, SignalInfo, float]] = []
+            ws_messages: list[dict] = []
+            normalized_batch: list[tuple[object, datetime, float, SignalInfo]] = []
+            fm_by_channel: dict[float, tuple[object, datetime, float, SignalInfo]] = {}
+
+            for sig, detected_at in batch:
+                raw_freq_hz = channelize(sig.frequency_hz)
                 signal_info = SignalInfo(
-                    frequency_hz=freq_hz,
+                    frequency_hz=raw_freq_hz,
                     bandwidth_hz=sig.bandwidth_hz,
                     peak_power=sig.peak_power,
                     modulation="unknown",
+                    signal_features=sig.features or {},
                 )
                 classified = classifier.classify(signal_info)
 
-                db_signal = Signal(
-                    frequency=freq_hz,
-                    bandwidth=sig.bandwidth_hz,
-                    modulation=classified.modulation,
-                    protocol=classified.protocol_hint or None,
-                    first_seen=now,
-                    last_seen=now,
-                    hit_count=1,
-                    avg_strength=sig.peak_power,
-                    confidence=0.0,
-                )
-                signal_id = await db.upsert_signal(db_signal)
+                if classified.protocol_hint == "broadcast_fm":
+                    existing = fm_by_channel.get(raw_freq_hz)
+                    candidate = (sig, detected_at, raw_freq_hz, classified)
+                    if existing is None or _fm_candidate_score(sig, classified) > _fm_candidate_score(existing[0], existing[3]):
+                        fm_by_channel[raw_freq_hz] = candidate
+                    continue
 
-                proto_label = classified.protocol_hint or classified.modulation
-                entry = ActivityEntry(
-                    signal_id=signal_id,
-                    timestamp=now,
-                    duration=cfg["scanner"]["dwell_time_ms"] / 1000.0,
-                    strength=sig.peak_power,
-                    decoder_used=None,
-                    result_type=classified.protocol_hint or "unknown",
-                    summary=f"{freq_hz / 1e6:.3f} MHz "
-                            f"[{proto_label}] {sig.peak_power:.1f} dBFS",
-                )
-                await db.insert_activity(entry)
+                normalized_batch.append((sig, detected_at, raw_freq_hz, classified))
 
-                if classified.protocol_hint == "ism":
-                    ism_candidates.append((signal_id, classified, sig.peak_power))
+            normalized_batch.extend(fm_by_channel.values())
+            async with db._lock:
+                for sig, detected_at, freq_hz, classified in normalized_batch:
+                    now = detected_at
+                    if 87_500_000 <= freq_hz <= 108_000_000 and sig.bandwidth_hz < 30_000:
+                        continue
 
-                # Broadcast to WebSocket clients
-                if ws_broadcast:
-                    broadcast_fn, msg_fn = ws_broadcast
-                    msg = msg_fn(
-                        frequency_hz=freq_hz,
-                        bandwidth_hz=sig.bandwidth_hz,
-                        power=sig.peak_power,
+                    db_signal = Signal(
+                        frequency=freq_hz,
+                        bandwidth=sig.bandwidth_hz,
                         modulation=classified.modulation,
-                        protocol=classified.protocol_hint,
+                        protocol=classified.protocol_hint or None,
+                        first_seen=now,
+                        last_seen=now,
+                        hit_count=1,
+                        avg_strength=sig.peak_power,
+                        confidence=0.0,
+                        classification_data={
+                            "signal_class": classified.signal_class,
+                            "content_confidence": classified.content_confidence,
+                            "signal_features": sig.features or {},
+                        },
                     )
-                    await broadcast_fn(msg)
+                    signal_id = await db.upsert_signal(db_signal, commit=False)
+
+                    proto_label = classified.protocol_hint or classified.modulation
+                    entry = ActivityEntry(
+                        signal_id=signal_id,
+                        timestamp=now,
+                        duration=cfg["scanner"]["dwell_time_ms"] / 1000.0,
+                        strength=sig.peak_power,
+                        decoder_used=None,
+                        result_type=classified.protocol_hint or "unknown",
+                        summary=f"{freq_hz / 1e6:.3f} MHz "
+                                f"[{proto_label}] {sig.peak_power:.1f} dBFS",
+                    )
+                    await db.insert_activity(entry, commit=False)
+
+                    if classified.protocol_hint == "ism":
+                        ism_candidates.append((signal_id, classified, sig.peak_power))
+
+                    if ws_broadcast:
+                        _, msg_fn = ws_broadcast
+                        ws_messages.append(
+                            msg_fn(
+                                frequency_hz=freq_hz,
+                                bandwidth_hz=sig.bandwidth_hz,
+                                power=sig.peak_power,
+                                modulation=classified.modulation,
+                                protocol=classified.protocol_hint,
+                                signal_class=classified.signal_class,
+                                content_confidence=classified.content_confidence,
+                            )
+                        )
+                await db.commit()
+
+            if ws_broadcast and ws_messages:
+                broadcast_fn, _ = ws_broadcast
+                if len(ws_messages) == 1:
+                    await broadcast_fn(ws_messages[0])
+                else:
+                    from signaldeck.api.websocket.live_signals import signal_batch_broadcast
+                    await broadcast_fn(signal_batch_broadcast(ws_messages))
 
             max_bursts = int(cfg["scanner"].get("ism_max_bursts_per_sweep", 3))
             ism_candidates.sort(key=lambda item: item[2], reverse=True)
@@ -537,17 +702,26 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
             if not gqrx_device or not audio_request_fn:
                 return
             _last_volume = None
+
+            def _slider_to_gqrx_af_gain(level: float | None) -> float:
+                # Map UI slider 0.0..1.0 to gqrx AF gain attenuation in dB.
+                # 0.0 => -60 dB (very quiet), 1.0 => 0 dB (full scale).
+                if level is None:
+                    level = 0.2
+                level = max(0.0, min(1.0, float(level)))
+                return -60.0 + (level * 60.0)
+
             while True:
                 try:
                     audio_req = audio_request_fn()
 
-                    # Handle volume changes (0.0-1.0 -> gqrx AF gain 0-100)
+                    # Handle volume changes (0.0-1.0 -> -60 dB to 0 dB AF gain)
                     vol = audio_req.get("volume")
                     if vol is not None and vol != _last_volume:
-                        af_gain = vol * 100.0
+                        af_gain = _slider_to_gqrx_af_gain(vol)
                         await gqrx_device._client.set_audio_gain(af_gain)
                         _last_volume = vol
-                        logger.debug("gqrx: volume %.0f%% (AF gain %.0f)", vol * 100, af_gain)
+                        logger.debug("gqrx: volume %.0f%% (AF gain %.1f dB)", vol * 100, af_gain)
 
                     if audio_req.get("active") and audio_req.get("frequency_hz"):
                         freq_hz = audio_req["frequency_hz"]
@@ -556,10 +730,11 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                             mode = _gqrx_mode_for(audio_req.get("modulation"), freq_hz)
                             await gqrx_device.set_mode(mode)
                             await gqrx_device.tune(freq_hz)
-                            # Ensure DSP is on and audio gain is audible
+                            # Ensure DSP is on, then apply the current slider value.
                             await gqrx_device._client.set_dsp(True)
-                            await gqrx_device._client.set_audio_gain(50)
-                            _last_volume = None
+                            af_gain = _slider_to_gqrx_af_gain(vol)
+                            await gqrx_device._client.set_audio_gain(af_gain)
+                            _last_volume = vol
                             _gqrx_tuned_freq = freq_hz
                             logger.info("gqrx: tuned to %.3f MHz (mode=%s)", freq_hz / 1e6, mode)
                             # Enable RDS for FM broadcast frequencies
@@ -612,6 +787,7 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
         gqrx_task = None
         if gqrx_device:
             gqrx_task = asyncio.create_task(_gqrx_tuning_loop())
+        signal_pipeline_task = asyncio.create_task(_signal_pipeline_worker())
 
         idle_ticks = 0
         try:
@@ -643,7 +819,7 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                     scanner._scan_ranges = [
                         ScanRange.from_config(r) for r in resolve_sweep_ranges(cfg["scanner"])
                     ]
-                    min_strength = cfg["scanner"].get("min_signal_strength", -30)
+                    min_strength = cfg["scanner"].get("min_signal_strength", -50)
                     device.set_gain(cfg["devices"]["gain"])
 
                     # SoapySDR handles scanning — respect selected mode
@@ -667,6 +843,8 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                                 fft_callback=on_fft,
                                 rds_callback=on_rds,
                                 rds_sample_count=131_072,
+                                signal_callback=on_signals,
+                                progress_callback=on_scan_progress,
                             )
                             scanner._scan_ranges = old_ranges
                         else:
@@ -678,9 +856,9 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                             fft_callback=on_fft,
                             rds_callback=on_rds,
                             rds_sample_count=131_072,
+                            signal_callback=on_signals,
+                            progress_callback=on_scan_progress,
                         )
-                    if signals:
-                        await on_signals(signals)
                 else:
                     # gqrx-only mode: no scanning, just handle tuning
                     idle_ticks += 1
@@ -694,6 +872,8 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
         finally:
             if gqrx_task:
                 gqrx_task.cancel()
+            signal_pipeline_task.cancel()
+            _scanner_state["current_range"] = None
             if device:
                 device.close()
             if gqrx_device:

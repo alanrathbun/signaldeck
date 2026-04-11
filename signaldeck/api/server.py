@@ -103,6 +103,7 @@ def create_app(config: dict, shared_db: Database | None = None) -> FastAPI:
     from signaldeck.api.routes.analytics import router as analytics_router
     from signaldeck.api.routes.auth_routes import router as auth_router
     from signaldeck.api.routes.logs import router as logs_router
+    from signaldeck.api.routes.process import router as process_router
 
     app.include_router(scanner_router, prefix="/api")
     app.include_router(signals_router, prefix="/api")
@@ -111,6 +112,7 @@ def create_app(config: dict, shared_db: Database | None = None) -> FastAPI:
     app.include_router(analytics_router, prefix="/api")
     app.include_router(auth_router, prefix="/api")
     app.include_router(logs_router, prefix="/api")
+    app.include_router(process_router, prefix="/api")
 
     from signaldeck.api.websocket.live_signals import router as ws_signals_router
     from signaldeck.api.websocket.audio_stream import router as ws_audio_router

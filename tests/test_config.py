@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from signaldeck.config import load_config
+from signaldeck.engine.scan_presets import resolve_sweep_ranges
 
 
 def test_load_default_config():
@@ -9,7 +10,7 @@ def test_load_default_config():
     assert cfg["scanner"]["fft_size"] == 1024
     assert cfg["scanner"]["squelch_offset"] == 20
     assert isinstance(cfg["scanner"]["sweep_ranges"], list)
-    assert len(cfg["scanner"]["sweep_ranges"]) > 0
+    assert len(resolve_sweep_ranges(cfg["scanner"])) > 0
 
 
 def test_load_custom_config(tmp_path: Path):
@@ -49,6 +50,7 @@ def test_default_config_has_gqrx_settings():
     from signaldeck.config import load_config
     cfg = load_config(None, load_user_settings=False)
     assert cfg["devices"]["gqrx_auto_detect"] is True
+    assert cfg["devices"]["gqrx_auto_start"] is True
     assert cfg["devices"]["gqrx_instances"] == []
 
 
@@ -56,4 +58,4 @@ def test_default_config_has_scan_profiles():
     """Default config enables curated scan profiles."""
     cfg = load_config(None, load_user_settings=False)
     assert isinstance(cfg["scanner"]["scan_profiles"], list)
-    assert "likely_local_voice" in cfg["scanner"]["scan_profiles"]
+    assert "rtl_priority_search" in cfg["scanner"]["scan_profiles"]

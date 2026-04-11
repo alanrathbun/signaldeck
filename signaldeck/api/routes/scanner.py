@@ -3,9 +3,11 @@ from pathlib import Path
 
 import yaml
 from fastapi import APIRouter
+from fastapi import Query
 from pydantic import BaseModel
 
 from signaldeck.api.server import get_config, get_db
+from signaldeck.engine.device_manager import DeviceManager
 from signaldeck.engine.scan_presets import get_scan_profile_catalog, resolve_scan_profile_keys, resolve_sweep_ranges
 
 logger = logging.getLogger(__name__)
@@ -18,6 +20,9 @@ _scanner_state = {
     "mode": "sweep",
     "backend": "soapysdr",  # "soapysdr" or "gqrx"
     "active_devices": 0,
+    "scanner_device": None,
+    "tuner_device": None,
+    "current_range": None,
 }
 
 
@@ -26,6 +31,8 @@ def set_scanner_state(status: str, mode: str = "sweep", active_devices: int = 1)
     _scanner_state["status"] = status
     _scanner_state["mode"] = mode
     _scanner_state["active_devices"] = active_devices
+    if status != "running":
+        _scanner_state["current_range"] = None
 
 
 @router.get("/scanner/status")
@@ -59,6 +66,7 @@ async def scanner_start(data: StartScannerRequest = None):
 @router.post("/scanner/stop")
 async def scanner_stop():
     _scanner_state["status"] = "idle"
+    _scanner_state["current_range"] = None
     return {"status": "idle", "message": "Scanner paused"}
 
 
@@ -71,6 +79,7 @@ async def get_status():
     db_stats = await db.get_stats()
     return {
         "scanner": _scanner_state,
+        "device_status": config.get("_runtime_devices", {}),
         "db_stats": db_stats,
         "ws_clients": len(ws_clients),
         "session_log": config.get("_session_log_file"),
@@ -79,12 +88,36 @@ async def get_status():
 
 
 @router.get("/settings")
-async def get_settings():
+async def get_settings(refresh_devices: bool = Query(default=False)):
     """Return full configuration for the settings page."""
     config = get_config()
     scanner_cfg = config.get("scanner", {})
+    devices_cfg = config.setdefault("devices", {})
+
+    # Refresh visible device inventory so the UI can pick up gqrx or SDRs
+    # that came online after SignalDeck started.
+    if refresh_devices:
+        try:
+            mgr = DeviceManager()
+            available = await mgr.enumerate_async(
+                gqrx_auto_detect=devices_cfg.get("gqrx_auto_detect", True),
+                gqrx_instances=devices_cfg.get("gqrx_instances", []),
+            )
+            hw_devices = [d for d in available if d.driver not in ("audio", "gqrx")]
+            gqrx_devices = [d for d in available if d.driver == "gqrx"]
+            devices_cfg["discovered"] = [
+                {"label": d.label, "driver": d.driver, "serial": d.serial}
+                for d in hw_devices
+            ]
+            devices_cfg["gqrx_instances"] = [
+                {"host": d.serial.split(":")[0], "port": int(d.serial.split(":")[1])}
+                for d in gqrx_devices
+            ]
+        except Exception as e:
+            logger.warning("Device refresh failed in settings endpoint: %s", e)
+
     return {
-        "devices": config.get("devices", {}),
+        "devices": devices_cfg,
         "scanner": {
             **scanner_cfg,
             "scan_profiles": resolve_scan_profile_keys(scanner_cfg),
@@ -188,13 +221,25 @@ async def update_settings(data: SettingsUpdate):
         logging.getLogger().setLevel(getattr(logging, data.log_level.upper(), logging.INFO))
         changed.append(f"log_level={data.log_level}")
 
+    # Device roles: treat 'none' / '' as "clear the preference" so we never
+    # write the literal string 'none' into user_settings.yaml.
     if data.scanner_device is not None:
-        config.setdefault("devices", {})["scanner_device"] = data.scanner_device
-        changed.append(f"scanner_device={data.scanner_device}")
+        devices_cfg = config.setdefault("devices", {})
+        if data.scanner_device in ("", "none"):
+            devices_cfg.pop("scanner_device", None)
+            changed.append("scanner_device=<cleared>")
+        else:
+            devices_cfg["scanner_device"] = data.scanner_device
+            changed.append(f"scanner_device={data.scanner_device}")
 
     if data.tuner_device is not None:
-        config.setdefault("devices", {})["tuner_device"] = data.tuner_device
-        changed.append(f"tuner_device={data.tuner_device}")
+        devices_cfg = config.setdefault("devices", {})
+        if data.tuner_device in ("", "none"):
+            devices_cfg.pop("tuner_device", None)
+            changed.append("tuner_device=<cleared>")
+        else:
+            devices_cfg["tuner_device"] = data.tuner_device
+            changed.append(f"tuner_device={data.tuner_device}")
 
     # Persist settings to user config file so they survive restarts
     if changed:
@@ -208,11 +253,19 @@ _USER_CONFIG_PATH = Path("config/user_settings.yaml")
 
 def _persist_user_config(config: dict) -> None:
     """Write the user-customizable settings to a YAML file."""
+    devices_cfg = config.get("devices", {})
+    scanner_device = devices_cfg.get("scanner_device")
+    tuner_device = devices_cfg.get("tuner_device")
+    # Guard against a literal 'none' sneaking into the file via older clients.
+    if scanner_device in ("", "none"):
+        scanner_device = None
+    if tuner_device in ("", "none"):
+        tuner_device = None
     user_cfg = {
         "devices": {
-            "gain": config.get("devices", {}).get("gain", 40),
-            "scanner_device": config.get("devices", {}).get("scanner_device"),
-            "tuner_device": config.get("devices", {}).get("tuner_device"),
+            "gain": devices_cfg.get("gain", 40),
+            "scanner_device": scanner_device,
+            "tuner_device": tuner_device,
         },
         "scanner": {
             "squelch_offset": config["scanner"].get("squelch_offset", 10),

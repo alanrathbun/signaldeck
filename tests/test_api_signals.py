@@ -36,6 +36,8 @@ async def test_list_signals_with_data(client):
     data = resp.json()
     assert len(data) == 1
     assert data[0]["frequency_mhz"] == 98.5
+    assert "signal_class" in data[0]
+    assert "content_confidence" in data[0]
 
 async def test_get_activity_empty(client):
     resp = await client.get("/api/activity")
@@ -81,6 +83,8 @@ async def test_enrichment_endpoint(client):
     assert data[key]["first_seen"] is not None
     assert data[key]["hit_count"] == 5
     assert data[key]["confidence"] == 0.8
+    assert "signal_class" in data[key]
+    assert "content_confidence" in data[key]
     assert data[key]["last_activity"]["decoder"] == "noaa"
     assert data[key]["last_activity"]["type"] == "weather"
 
@@ -118,3 +122,32 @@ async def test_ism_activity_endpoint(client):
     data = resp.json()
     assert len(data) == 1
     assert data[0]["decoder"] == "rtl_433"
+
+
+async def test_list_recordings_endpoint(client):
+    db = get_db()
+    await db._conn.execute(
+        """INSERT INTO recordings
+           (activity_id, signal_id, frequency, timestamp, duration, format, file_path, file_size, transcription)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            None,
+            None,
+            162_550_000.0,
+            datetime.now(timezone.utc).isoformat(),
+            12.5,
+            "wav",
+            "data/recordings/test.wav",
+            12345,
+            "test transcript",
+        ),
+    )
+    await db._conn.commit()
+
+    resp = await client.get("/api/recordings")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["frequency_mhz"] == 162.55
+    assert data[0]["file_path"] == "data/recordings/test.wav"
+    assert data[0]["transcription"] == "test transcript"

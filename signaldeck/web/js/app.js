@@ -17,13 +17,17 @@ function dashboard() {
     scanning: false,
     scanMode: 'sweep',
     wsConnected: false,
+    statusPollTimer: null,
 
     // --- Live Signals ---
     liveSignals: [],
+    pendingSignalMessages: [],
+    signalFlushTimer: null,
     signalEnrichment: {},
     _enrichmentTimer: null,
     liveFilterMod: '',
     liveFilterProto: '',
+    liveFilterSignalClass: '',
     liveFilterMinPower: null,
     liveFilterFreq: '',
     liveFilterDecoder: '',
@@ -33,7 +37,7 @@ function dashboard() {
     liveSortAsc: false,
     showColumnPicker: false,
     liveVisibleCols: JSON.parse(localStorage.getItem('signaldeck_live_cols') || 'null')
-      || ['frequency', 'power', 'modulation', 'protocol', 'rds', 'hits', 'last_seen'],
+      || ['frequency', 'power', 'modulation', 'protocol', 'signal_class', 'rds', 'hits', 'last_seen'],
     allLiveColumns: [
       { key: 'frequency', label: 'Frequency' },
       { key: 'bandwidth', label: 'Bandwidth' },
@@ -45,6 +49,7 @@ function dashboard() {
       { key: 'last_seen', label: 'Last Seen' },
       { key: 'first_seen', label: 'First Seen' },
       { key: 'confidence', label: 'Confidence' },
+      { key: 'signal_class', label: 'Signal Class' },
       { key: 'decoder', label: 'Decoder' },
       { key: 'activity_type', label: 'Activity Type' },
       { key: 'activity_summary', label: 'Last Activity' },
@@ -74,6 +79,25 @@ function dashboard() {
     scannerStatus: {},
     settings: {},
     statusData: {},
+
+    // --- Process lifecycle (systemd --user) ---
+    processStatus: {
+      pid: null,
+      uptime_seconds: null,
+      running: true,
+      can_control: false,
+      supervisor: null,
+    },
+    processActionBusy: false,
+    processActionMessage: '',
+    // Connection-health state for the Service badge. We flip to
+    // "disconnected" when two consecutive /api/process/status calls fail,
+    // and to "restarting" while an active restart is in flight.
+    processConnected: true,
+    processConsecutiveFailures: 0,
+    processRestartInFlight: false,
+    processRestartPrevPid: null,
+
     editSettings: {
       gain: 40,
       squelch_offset: 10,
@@ -93,22 +117,16 @@ function dashboard() {
 
     // --- Default scan range presets ---
     defaultScanRanges: [
-      { label: 'Broadcast FM', start_mhz: 88, end_mhz: 108, step_khz: 200, priority: 20 },
+      { label: 'NOAA Weather', start_mhz: 162.4, end_mhz: 162.55, step_khz: 25, priority: 22 },
+      { label: 'Marine VHF', start_mhz: 156, end_mhz: 163, step_khz: 25, priority: 21 },
       { label: 'Airband', start_mhz: 118, end_mhz: 137, step_khz: 25, priority: 19 },
-      { label: 'VHF Low', start_mhz: 25, end_mhz: 54, step_khz: 100, priority: 8 },
-      { label: 'VHF High', start_mhz: 134, end_mhz: 174, step_khz: 25, priority: 14 },
-      { label: 'UHF', start_mhz: 400, end_mhz: 512, step_khz: 25, priority: 14 },
-      { label: 'ISM 315', start_mhz: 314.8, end_mhz: 315.3, step_khz: 25, priority: 18 },
-      { label: 'ISM 390', start_mhz: 389.8, end_mhz: 390.3, step_khz: 25, priority: 17 },
+      { label: 'Broadcast FM', start_mhz: 88, end_mhz: 108, step_khz: 200, priority: 18 },
+      { label: '2m Amateur', start_mhz: 144, end_mhz: 148, step_khz: 25, priority: 19 },
+      { label: 'MURS', start_mhz: 151.82, end_mhz: 154.6, step_khz: 12.5, priority: 18 },
+      { label: 'Pager / POCSAG', start_mhz: 152, end_mhz: 159, step_khz: 12.5, priority: 18 },
       { label: 'ISM 433', start_mhz: 433, end_mhz: 435, step_khz: 25, priority: 20 },
-      { label: 'ISM 915', start_mhz: 902, end_mhz: 928, step_khz: 100, priority: 18 },
-      { label: 'Marine VHF', start_mhz: 156, end_mhz: 163, step_khz: 25, priority: 19 },
-      { label: 'Weather (NOAA)', start_mhz: 162.4, end_mhz: 162.55, step_khz: 25, priority: 20 },
       { label: 'FRS/GMRS', start_mhz: 462.55, end_mhz: 467.725, step_khz: 12.5, priority: 18 },
-      { label: 'MURS', start_mhz: 151.82, end_mhz: 154.6, step_khz: 12.5, priority: 15 },
-      { label: 'ADS-B (1090)', start_mhz: 1088, end_mhz: 1092, step_khz: 250, priority: 20 },
       { label: 'NOAA APT', start_mhz: 137, end_mhz: 138, step_khz: 25, priority: 16 },
-      { label: 'TV UHF', start_mhz: 470, end_mhz: 608, step_khz: 250, priority: 12 },
     ],
     showDefaultRanges: false,
 
@@ -171,8 +189,9 @@ function dashboard() {
         }
       });
 
-      // Fetch scanner status (needed to know if gqrx backend)
+      // Fetch scanner status frequently, but avoid hardware refreshes.
       this.fetchStatus();
+      this.statusPollTimer = setInterval(() => this.fetchStatus(), 3000);
 
       // Periodic enrichment sync for database fields
       this.fetchEnrichment();
@@ -226,7 +245,7 @@ function dashboard() {
       switch (this.currentPage) {
         case 'recordings': this.fetchRecordings(); break;
         case 'bookmarks': this.fetchBookmarks(); break;
-        case 'settings': this.fetchStatus(); break;
+        case 'settings': this.fetchSettings(true); break;
       }
     },
 
@@ -311,20 +330,45 @@ function dashboard() {
     },
 
     handleSignalMessage(data) {
-      if (data.type === 'signal' || data.frequency) {
-        const sig = data.signal || data;
-        const idx = this.liveSignals.findIndex(s => s.frequency === sig.frequency);
-        if (idx >= 0) {
+      if (data.type === 'signal_batch' && Array.isArray(data.signals)) {
+        this.pendingSignalMessages.push(...data.signals);
+      } else if (data.type === 'signal' || data.frequency) {
+        this.pendingSignalMessages.push(data.signal || data);
+      } else {
+        return;
+      }
+      this.scheduleSignalFlush();
+    },
+
+    scheduleSignalFlush() {
+      if (this.signalFlushTimer) return;
+      this.signalFlushTimer = setTimeout(() => {
+        this.flushPendingSignals();
+      }, 120);
+    },
+
+    flushPendingSignals() {
+      this.signalFlushTimer = null;
+      if (!this.pendingSignalMessages.length) return;
+      const batch = this.pendingSignalMessages.splice(0, this.pendingSignalMessages.length);
+      const indexByFrequency = new Map(this.liveSignals.map((sig, idx) => [sig.frequency, idx]));
+
+      for (const sig of batch) {
+        const idx = indexByFrequency.get(sig.frequency);
+        if (idx !== undefined) {
           const prev = this.liveSignals[idx];
-          this.liveSignals[idx] = { ...prev, ...sig, _updated: Date.now(), _hits: (prev._hits || 1) + 1, rds: sig.rds || prev.rds || null };
+          this.liveSignals[idx] = {
+            ...prev,
+            ...sig,
+            _updated: Date.now(),
+            _hits: (prev._hits || 1) + 1,
+            rds: sig.rds || prev.rds || null,
+          };
         } else {
+          indexByFrequency.set(sig.frequency, this.liveSignals.length);
           this.liveSignals.push({ ...sig, _updated: Date.now(), _hits: 1, rds: sig.rds || null });
         }
-        // Remove stale signals (older than 60 seconds)
-        const cutoff = Date.now() - 60000;
-        this.liveSignals = this.liveSignals.filter(s => s._updated > cutoff);
 
-        // Forward to map if position data
         if (sig.latitude && sig.longitude && this.signalMap) {
           if (sig.protocol === 'ADS-B' || sig.type === 'adsb') {
             this.signalMap.addAircraft(sig);
@@ -333,6 +377,13 @@ function dashboard() {
           }
         }
       }
+      this.pruneLiveSignals();
+    },
+
+    pruneLiveSignals() {
+      // Live signals persist until the user explicitly clears them.
+      // We still merge repeat hits by frequency in flushPendingSignals().
+      return;
     },
 
     // =====================================================
@@ -439,52 +490,74 @@ function dashboard() {
       if (data) this.bookmarks = Array.isArray(data) ? data : (data.bookmarks || []);
     },
 
+    applySettings(settings) {
+      this.settings = settings;
+      if (settings.devices) {
+        this.editSettings.gain = settings.devices.gain ?? 40;
+        // Round-trip persisted device roles so the Settings form shows the
+        // real selection instead of snapping back to the default 'none'.
+        // Without this, saving any other setting silently clobbers the
+        // stored scanner/tuner preference.
+        this.editSettings.scanner_device = settings.devices.scanner_device || 'none';
+        this.editSettings.tuner_device = settings.devices.tuner_device || 'none';
+      }
+      if (settings.scanner) {
+        this.editSettings.squelch_offset = settings.scanner.squelch_offset ?? 10;
+        this.editSettings.min_signal_strength = settings.scanner.min_signal_strength ?? -50;
+        this.editSettings.dwell_time_ms = settings.scanner.dwell_time_ms ?? 50;
+        this.editSettings.fft_size = settings.scanner.fft_size ?? 1024;
+        this.editSettings.scan_profiles = [...(settings.scanner.scan_profiles || [])];
+        this.availableScanProfiles = settings.scanner.available_scan_profiles || [];
+        this.editSettings.scan_ranges = (settings.scanner.sweep_ranges || []).map(r => ({
+          label: r.label || '',
+          start_mhz: r.start_mhz,
+          end_mhz: r.end_mhz,
+          step_khz: r.step_khz ?? 200,
+          priority: r.priority ?? 10,
+        }));
+        this.scannerStatus.scan_ranges = settings.scanner.resolved_sweep_ranges || this.editSettings.scan_ranges;
+        this.scannerStatus.scan_profiles = this.editSettings.scan_profiles;
+        this.scannerStatus.squelch_offset = this.editSettings.squelch_offset;
+        this.scannerStatus.fft_size = this.editSettings.fft_size;
+        this.scannerStatus.dwell_time_ms = this.editSettings.dwell_time_ms;
+      }
+      if (settings.devices) {
+        this.scannerStatus.gain = settings.devices.gain;
+      }
+      if (settings.audio) {
+        this.editSettings.sample_rate = settings.audio.sample_rate || 48000;
+        this.editSettings.recording_dir = settings.audio.recording_dir || 'data/recordings';
+      }
+      if (settings.logging) {
+        this.editSettings.log_level = settings.logging.level || 'INFO';
+      }
+    },
+
+    async fetchSettings(refreshDevices = false) {
+      const suffix = refreshDevices ? '?refresh_devices=true' : '';
+      const settings = await this.apiFetch(`/api/settings${suffix}`, { _silent: true });
+      if (settings) this.applySettings(settings);
+      return settings;
+    },
+
     async fetchStatus() {
-      const [status, settings] = await Promise.all([
-        this.apiFetch('/api/scanner/status', { _silent: true }),
-        this.apiFetch('/api/settings', { _silent: true }),
-      ]);
+      const status = await this.apiFetch('/api/scanner/status', { _silent: true });
       if (status) {
         this.scannerStatus = { ...this.scannerStatus, ...status };
         this.scanning = status.status === 'running';
       }
-      if (settings) {
-        this.settings = settings;
-        // Populate editable settings from current config
-        if (settings.devices) {
-          this.editSettings.gain = settings.devices.gain ?? 40;
-        }
-        if (settings.scanner) {
-          this.editSettings.squelch_offset = settings.scanner.squelch_offset ?? 10;
-          this.editSettings.min_signal_strength = settings.scanner.min_signal_strength ?? -50;
-          this.editSettings.dwell_time_ms = settings.scanner.dwell_time_ms ?? 50;
-          this.editSettings.fft_size = settings.scanner.fft_size ?? 1024;
-          this.editSettings.scan_profiles = [...(settings.scanner.scan_profiles || [])];
-          this.availableScanProfiles = settings.scanner.available_scan_profiles || [];
-          this.editSettings.scan_ranges = (settings.scanner.sweep_ranges || []).map(r => ({
-            label: r.label || '',
-            start_mhz: r.start_mhz,
-            end_mhz: r.end_mhz,
-            step_khz: r.step_khz ?? 200,
-            priority: r.priority ?? 10,
-          }));
-          this.scannerStatus.scan_ranges = settings.scanner.resolved_sweep_ranges || this.editSettings.scan_ranges;
-          this.scannerStatus.scan_profiles = this.editSettings.scan_profiles;
-          this.scannerStatus.squelch_offset = this.editSettings.squelch_offset;
-          this.scannerStatus.fft_size = this.editSettings.fft_size;
-          this.scannerStatus.dwell_time_ms = this.editSettings.dwell_time_ms;
-        }
-        if (settings.devices) {
-          this.scannerStatus.gain = settings.devices.gain;
-        }
-        if (settings.audio) {
-          this.editSettings.sample_rate = settings.audio.sample_rate || 48000;
-          this.editSettings.recording_dir = settings.audio.recording_dir || 'data/recordings';
-        }
-        if (settings.logging) {
-          this.editSettings.log_level = settings.logging.level || 'INFO';
-        }
-      }
+    },
+
+    get liveCurrentRange() {
+      return this.scannerStatus.current_range || null;
+    },
+
+    formatRangeSummary(range) {
+      if (!range) return 'Waiting for scan progress';
+      const label = range.label || `${(range.start_hz / 1e6).toFixed(3)}-${(range.end_hz / 1e6).toFixed(3)} MHz`;
+      const stepPart = range.step_index && range.step_count ? ` ${range.step_index}/${range.step_count}` : '';
+      const freqPart = range.frequency_mhz ? ` @ ${range.frequency_mhz.toFixed(3)} MHz` : '';
+      return `${label}${stepPart}${freqPart}`;
     },
 
     async saveSettings() {
@@ -500,6 +573,7 @@ function dashboard() {
       });
       if (data) {
         this.showToast('Settings saved. Changes take effect on next scan cycle.', 'success');
+        await this.fetchSettings(true);
         await this.fetchStatus();
       }
     },
@@ -550,7 +624,126 @@ function dashboard() {
         const data = await this.apiFetch('/api/status', { _silent: true });
         if (data) this.statusData = data;
       } catch (e) { /* status page is non-critical */ }
-      await this.fetchStatus();
+      await Promise.all([this.fetchStatus(), this.fetchSettings(false), this.fetchProcessStatus()]);
+    },
+
+    // --- Process lifecycle ---
+
+    async fetchProcessStatus() {
+      try {
+        const data = await this.apiFetch('/api/process/status', { _silent: true });
+        if (data) {
+          this.processStatus = data;
+          this.processConnected = true;
+          this.processConsecutiveFailures = 0;
+          // Detect a completed restart: PID changed while we were waiting.
+          if (this.processRestartInFlight
+              && this.processRestartPrevPid
+              && data.pid
+              && data.pid !== this.processRestartPrevPid) {
+            this.processRestartInFlight = false;
+            this.processRestartPrevPid = null;
+            this.processActionBusy = false;
+            this.processActionMessage = `Restarted (new pid ${data.pid}).`;
+            this.showToast('SignalDeck restarted.', 'success');
+          }
+          return data;
+        }
+        // apiFetch returning null counts as a transient failure during a
+        // restart window, but not otherwise.
+        this.processConsecutiveFailures += 1;
+      } catch (e) {
+        this.processConsecutiveFailures += 1;
+      }
+      if (this.processConsecutiveFailures >= 2 && !this.processRestartInFlight) {
+        this.processConnected = false;
+      }
+      return null;
+    },
+
+    processStateLabel() {
+      if (this.processRestartInFlight) return 'Restarting…';
+      if (!this.processConnected) return 'Disconnected';
+      return 'Running';
+    },
+
+    processStateBadgeClass() {
+      if (this.processRestartInFlight) return 'badge-orange';
+      if (!this.processConnected) return 'badge-red';
+      return 'badge-green';
+    },
+
+    formatUptime(seconds) {
+      if (seconds == null) return '--';
+      const s = Math.floor(seconds);
+      const d = Math.floor(s / 86400);
+      const h = Math.floor((s % 86400) / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      const ss = s % 60;
+      if (d > 0) return `${d}d ${h}h ${m}m`;
+      if (h > 0) return `${h}h ${m}m`;
+      if (m > 0) return `${m}m ${ss}s`;
+      return `${ss}s`;
+    },
+
+    confirmProcessAction(verb) {
+      const pretty = verb.charAt(0).toUpperCase() + verb.slice(1);
+      if (!window.confirm(`${pretty} SignalDeck service?`)) return;
+      this.processAction(verb);
+    },
+
+    async processAction(verb) {
+      if (this.processActionBusy) return;
+      this.processActionBusy = true;
+      this.processActionMessage = `${verb === 'restart' ? 'Restarting' : verb === 'stop' ? 'Stopping' : 'Starting'}…`;
+      if (verb === 'restart') {
+        this.processRestartInFlight = true;
+        this.processRestartPrevPid = this.processStatus.pid;
+      }
+      try {
+        // Stop/restart may kill the response before it lands; treat a
+        // network failure the same as a 202.
+        const resp = await this.apiFetch(`/api/process/${verb}`, {
+          method: 'POST',
+          body: JSON.stringify({}),
+          _silent: true,
+        }).catch(() => null);
+        if (verb === 'stop' && resp !== null) {
+          this.processActionMessage = 'Stop requested.';
+        }
+      } finally {
+        if (verb === 'restart') {
+          // Poll until the process comes back with a new PID. Give up
+          // after ~30s and show a clear message.
+          const deadline = Date.now() + 30000;
+          const tick = async () => {
+            if (Date.now() > deadline) {
+              this.processRestartInFlight = false;
+              this.processActionBusy = false;
+              this.processActionMessage = 'Restart timed out waiting for the service to come back.';
+              return;
+            }
+            await this.fetchProcessStatus();
+            if (this.processRestartInFlight) {
+              setTimeout(tick, 1000);
+            }
+          };
+          setTimeout(tick, 1500);
+        } else if (verb === 'stop') {
+          // After stop, the next poll will fail — flip to disconnected
+          // without counting it as an error.
+          setTimeout(() => {
+            this.processConnected = false;
+            this.processActionBusy = false;
+          }, 1500);
+        } else {
+          // start: just refresh status shortly.
+          setTimeout(() => {
+            this.fetchProcessStatus();
+            this.processActionBusy = false;
+          }, 1000);
+        }
+      }
     },
 
     async fetchAnalytics() {
@@ -613,6 +806,7 @@ function dashboard() {
         });
         if (resp) {
           this.showToast(`Authentication ${!current ? 'enabled' : 'disabled'}`, 'success');
+          this.fetchSettings(false);
           this.fetchStatus();
         }
       } catch (e) {
@@ -681,10 +875,24 @@ function dashboard() {
       try {
         const data = await this.apiFetch(`/api/data/${target}`, { method: 'DELETE' });
         if (data) {
+          if (target === 'signals') {
+            this.liveSignals = [];
+            this.signalEnrichment = {};
+          }
           this.showToast(`${target} cleared`, 'success');
         }
       } catch (e) {
         this.showToast(`Failed to clear ${target}`, 'error');
+      }
+    },
+
+    async clearLiveSignals() {
+      if (!confirm('Clear signals from the live dashboard and database?')) return;
+      const ok = await this.apiFetch('/api/data/signals', { method: 'DELETE' });
+      if (ok) {
+        this.liveSignals = [];
+        this.signalEnrichment = {};
+        this.showToast('Live signals cleared', 'success');
       }
     },
 
@@ -758,6 +966,7 @@ function dashboard() {
       return this.liveSignals.filter(s => {
         if (this.liveFilterMod && s.modulation !== this.liveFilterMod) return false;
         if (this.liveFilterProto && s.protocol !== this.liveFilterProto) return false;
+        if (this.liveFilterSignalClass && (s.signal_class || '') !== this.liveFilterSignalClass) return false;
         if (this.liveFilterMinPower && s.power < this.liveFilterMinPower) return false;
         if (this.liveFilterFreq) {
           const mhz = (s.frequency || 0) / 1e6;
@@ -791,6 +1000,8 @@ function dashboard() {
           first_seen: enrich.first_seen || null,
           db_hits: enrich.hit_count || 0,
           confidence: enrich.confidence || 0,
+          signal_class: sig.signal_class || enrich.signal_class || null,
+          content_confidence: sig.content_confidence ?? enrich.content_confidence ?? 0,
           decoder: activity.decoder || null,
           activity_type: activity.type || null,
           activity_summary: activity.summary || null,
@@ -805,6 +1016,7 @@ function dashboard() {
       return [...this.enrichedLiveSignals].sort((a, b) => {
         let va = a[key], vb = b[key];
         if (key === 'hits') { va = a._hits || 1; vb = b._hits || 1; }
+        if (key === 'last_seen') { va = a._updated || 0; vb = b._updated || 0; }
         if (typeof va === 'string') va = (va || '').toLowerCase();
         if (typeof vb === 'string') vb = (vb || '').toLowerCase();
         if (va == null) va = '';
@@ -842,6 +1054,7 @@ function dashboard() {
     clearLiveFilters() {
       this.liveFilterMod = '';
       this.liveFilterProto = '';
+      this.liveFilterSignalClass = '';
       this.liveFilterMinPower = null;
       this.liveFilterFreq = '';
       this.liveFilterDecoder = '';
@@ -857,6 +1070,17 @@ function dashboard() {
     get liveProtocols() {
       const protos = new Set(this.liveSignals.map(s => s.protocol).filter(Boolean));
       return [...protos].sort();
+    },
+
+    get liveSignalClasses() {
+      const classes = new Set();
+      for (const s of this.liveSignals) {
+        const freqKey = String(Math.round(s.frequency || 0));
+        const enrich = this.signalEnrichment[freqKey] || {};
+        const signalClass = s.signal_class || enrich.signal_class;
+        if (signalClass) classes.add(signalClass);
+      }
+      return [...classes].sort();
     },
 
     get liveDecoders() {
@@ -907,7 +1131,7 @@ function dashboard() {
       }
       if (this.audioPlayer) {
         // Always subscribe via WebSocket — this tells the backend to tune
-        this.audioPlayer.subscribe(this.audioFreqMhz * 1e6, this._tuneModulation);
+        this.audioPlayer.subscribe(this.audioFreqMhz * 1e6, this._tuneModulation, this.audioVolume);
         this._tuneModulation = null;
         this.audioPlaying = true;
 
