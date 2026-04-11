@@ -60,6 +60,11 @@ function dashboard() {
 
     // --- Bookmarks ---
     bookmarks: [],
+    // ---- Bookmark edit/create modal state ----
+    editingBookmark: null,         // null = modal hidden; object = modal open
+    editModalMode: 'create',       // 'create' | 'edit'
+    editModalSignal: null,         // source Live signal for create-from-signal mode
+    editModalError: '',
     newBookmark: {
       frequency: null,
       label: '',
@@ -1319,6 +1324,106 @@ function dashboard() {
       });
       this.showToast('Bookmarked ' + this.formatFreq(sig.frequency), 'success');
       this.fetchBookmarks();
+    },
+
+    // --- Bookmark edit/create modal methods ---
+
+    openEditBookmark(bookmark) {
+      // Clone so in-modal edits don't mutate the list until save
+      this.editingBookmark = { ...bookmark };
+      this.editModalMode = 'edit';
+      this.editModalSignal = null;
+      this.editModalError = '';
+    },
+
+    openCreateBookmarkFromSignal(sig) {
+      // Dedupe — if already bookmarked, open Edit mode on the existing row
+      const existing = this.findBookmarkForFrequency(sig.frequency);
+      if (existing) {
+        this.openEditBookmark(existing);
+        return;
+      }
+      this.editingBookmark = {
+        id: null,
+        frequency_hz: sig.frequency,
+        label: (sig.protocol || sig.modulation || 'Signal') + ' ' + this.formatFreq(sig.frequency),
+        modulation: sig.modulation || 'FM',
+        decoder: sig.protocol || null,
+        priority: 3,
+        camp_on_active: false,
+        notes: '',
+      };
+      this.editModalMode = 'create';
+      this.editModalSignal = sig;
+      this.editModalError = '';
+    },
+
+    openNewBookmark() {
+      this.editingBookmark = {
+        id: null,
+        frequency_hz: null,
+        label: '',
+        modulation: 'FM',
+        decoder: null,
+        priority: 3,
+        camp_on_active: false,
+        notes: '',
+      };
+      this.editModalMode = 'create';
+      this.editModalSignal = null;
+      this.editModalError = '';
+    },
+
+    async saveBookmarkEdit() {
+      if (!this.editingBookmark) return;
+      const bm = this.editingBookmark;
+
+      // Client-side validation
+      if (!bm.label || !bm.label.trim()) {
+        this.editModalError = 'Label is required';
+        return;
+      }
+      if (this.editModalMode === 'create' && (!bm.frequency_hz || bm.frequency_hz <= 0)) {
+        this.editModalError = 'Frequency is required';
+        return;
+      }
+
+      const payload = {
+        label: bm.label.trim(),
+        modulation: bm.modulation || null,
+        decoder: bm.decoder || null,
+        priority: bm.priority || 3,
+        camp_on_active: !!bm.camp_on_active,
+        notes: bm.notes || '',
+      };
+
+      let result;
+      if (this.editModalMode === 'edit') {
+        result = await this.apiFetch(`/api/bookmarks/${bm.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify(payload),
+        });
+      } else {
+        payload.frequency_hz = bm.frequency_hz;
+        result = await this.apiFetch('/api/bookmarks', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+      }
+
+      if (result) {
+        this.showToast(
+          this.editModalMode === 'edit' ? 'Bookmark updated' : 'Bookmarked ' + this.formatFreq(bm.frequency_hz),
+          'success',
+        );
+        this.editingBookmark = null;
+        this.fetchBookmarks();
+      }
+    },
+
+    cancelBookmarkEdit() {
+      this.editingBookmark = null;
+      this.editModalError = '';
     },
 
     isGqrxBackend() {
