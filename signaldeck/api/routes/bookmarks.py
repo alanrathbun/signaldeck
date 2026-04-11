@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from signaldeck.api.server import get_db
 from signaldeck.storage.models import Bookmark
 
@@ -14,6 +14,14 @@ class BookmarkCreate(BaseModel):
     priority: int = 3
     camp_on_active: bool = False
     notes: str = ""
+
+class BookmarkUpdate(BaseModel):
+    label: str | None = Field(default=None, min_length=1, max_length=200)
+    modulation: str | None = None
+    decoder: str | None = None
+    priority: int | None = Field(default=None, ge=1, le=5)
+    camp_on_active: bool | None = None
+    notes: str | None = Field(default=None, max_length=2000)
 
 @router.get("/bookmarks")
 async def list_bookmarks():
@@ -40,3 +48,19 @@ async def delete_bookmark(bookmark_id: int):
     if not deleted:
         raise HTTPException(status_code=404, detail="Bookmark not found")
     return {"deleted": True}
+
+@router.patch("/bookmarks/{bookmark_id}")
+async def update_bookmark(bookmark_id: int, data: BookmarkUpdate):
+    db = get_db()
+    ok = await db.update_bookmark(
+        bookmark_id,
+        label=data.label,
+        modulation=data.modulation,
+        decoder=data.decoder,
+        priority=data.priority,
+        camp_on_active=data.camp_on_active,
+        notes=data.notes,
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="Bookmark not found")
+    return {"id": bookmark_id, "updated": True}

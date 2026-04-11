@@ -98,3 +98,104 @@ async def test_create_bookmark_validation_missing_required_fields(client):
     # Missing required fields: frequency_hz and label
     resp = await client.post("/api/bookmarks", json={"modulation": "FM"})
     assert resp.status_code == 422
+
+
+async def test_patch_bookmark_updates_label(client):
+    create_resp = await client.post("/api/bookmarks", json={
+        "frequency_hz": 162_400_000.0,
+        "label": "NOAA Weather",
+        "modulation": "NFM",
+        "priority": 5,
+    })
+    bk_id = create_resp.json()["id"]
+
+    patch_resp = await client.patch(
+        f"/api/bookmarks/{bk_id}",
+        json={"label": "NOAA WX (renamed)"},
+    )
+    assert patch_resp.status_code == 200
+    assert patch_resp.json() == {"id": bk_id, "updated": True}
+
+    list_resp = await client.get("/api/bookmarks")
+    row = next(b for b in list_resp.json() if b["id"] == bk_id)
+    assert row["label"] == "NOAA WX (renamed)"
+    # Other fields preserved
+    assert row["modulation"] == "NFM"
+    assert row["priority"] == 5
+
+
+async def test_patch_bookmark_partial_update(client):
+    """PATCH with only priority leaves other fields unchanged."""
+    create_resp = await client.post("/api/bookmarks", json={
+        "frequency_hz": 146_520_000.0,
+        "label": "2m Calling",
+        "modulation": "FM",
+        "decoder": "aprs",
+        "priority": 3,
+        "notes": "do not touch",
+    })
+    bk_id = create_resp.json()["id"]
+
+    patch_resp = await client.patch(f"/api/bookmarks/{bk_id}", json={"priority": 5})
+    assert patch_resp.status_code == 200
+
+    list_resp = await client.get("/api/bookmarks")
+    row = next(b for b in list_resp.json() if b["id"] == bk_id)
+    assert row["priority"] == 5
+    assert row["label"] == "2m Calling"
+    assert row["modulation"] == "FM"
+    assert row["decoder"] == "aprs"
+    assert row["notes"] == "do not touch"
+
+
+async def test_patch_bookmark_missing_returns_404(client):
+    resp = await client.patch("/api/bookmarks/99999", json={"label": "nope"})
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Bookmark not found"
+
+
+async def test_patch_bookmark_rejects_empty_label(client):
+    create_resp = await client.post("/api/bookmarks", json={
+        "frequency_hz": 121_500_000.0,
+        "label": "Aviation Guard",
+        "modulation": "AM",
+    })
+    bk_id = create_resp.json()["id"]
+
+    resp = await client.patch(f"/api/bookmarks/{bk_id}", json={"label": ""})
+    # Pydantic min_length=1 rejects with 422
+    assert resp.status_code == 422
+
+
+async def test_patch_bookmark_rejects_priority_out_of_range(client):
+    create_resp = await client.post("/api/bookmarks", json={
+        "frequency_hz": 156_800_000.0,
+        "label": "Marine Ch16",
+        "modulation": "NFM",
+    })
+    bk_id = create_resp.json()["id"]
+
+    # Too high
+    resp = await client.patch(f"/api/bookmarks/{bk_id}", json={"priority": 10})
+    assert resp.status_code == 422
+    # Too low
+    resp = await client.patch(f"/api/bookmarks/{bk_id}", json={"priority": 0})
+    assert resp.status_code == 422
+
+
+async def test_patch_bookmark_clears_notes_with_empty_string(client):
+    """PATCH with notes='' stores an empty string (not null)."""
+    create_resp = await client.post("/api/bookmarks", json={
+        "frequency_hz": 100_300_000.0,
+        "label": "Classic FM",
+        "modulation": "FM",
+        "notes": "has some notes",
+    })
+    bk_id = create_resp.json()["id"]
+
+    patch_resp = await client.patch(f"/api/bookmarks/{bk_id}", json={"notes": ""})
+    assert patch_resp.status_code == 200
+
+    list_resp = await client.get("/api/bookmarks")
+    row = next(b for b in list_resp.json() if b["id"] == bk_id)
+    assert row["notes"] == ""
