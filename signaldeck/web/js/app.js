@@ -728,7 +728,13 @@ function dashboard() {
           }
         }
       } catch (e) { /* status page is non-critical */ }
-      await Promise.all([this.fetchStatus(), this.fetchSettings(false), this.fetchProcessStatus()]);
+      // Refresh live telemetry on every poll, but do NOT re-fetch settings
+      // here — applySettings clobbers editSettings, which would stomp on
+      // the user's in-progress dropdown/field edits on the Settings page.
+      // Settings are fetched explicitly on page navigation (fetchPageData's
+      // 'settings' case calls fetchSettings(true)) and after an explicit
+      // save (saveSettings → fetchSettings(true)).
+      await Promise.all([this.fetchStatus(), this.fetchProcessStatus()]);
     },
 
     // --- Process lifecycle ---
