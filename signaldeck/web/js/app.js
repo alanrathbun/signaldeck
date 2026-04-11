@@ -948,15 +948,27 @@ function dashboard() {
 
     async revokeSession(id) {
       if (!confirm('Revoke this device? It will need to sign in again.')) return;
-      const resp = await fetch(`/api/auth/sessions/${id}`, {
-        method: 'DELETE',
-        credentials: 'same-origin',
-      });
+      let resp;
+      try {
+        resp = await fetch(`/api/auth/sessions/${id}`, {
+          method: 'DELETE',
+          credentials: 'same-origin',
+        });
+      } catch (e) {
+        this.showToast('Revoke failed — network error', 'error');
+        return;
+      }
       if (resp.status === 200) {
         this.showToast('Revoked', 'success');
         this.fetchSessions();
       } else if (resp.status === 401) {
         this.loginRequired = true;
+      } else if (resp.status === 404) {
+        // Already gone — refresh to drop the stale row
+        this.showToast('Session already removed', 'info');
+        this.fetchSessions();
+      } else {
+        this.showToast(`Revoke failed (${resp.status})`, 'error');
       }
     },
 
