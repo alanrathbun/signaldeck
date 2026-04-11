@@ -55,6 +55,7 @@ def cli() -> None:
 
 async def _stream_audio(device, frequency_hz: float, send_fn, audio_request_fn,
                         sample_rate: float = 2_000_000,
+                        gain_db: float | None = None,
                         chunk_duration_s: float = 0.04,
                         fft_callback=None,
                         rds_callback=None) -> None:
@@ -63,12 +64,22 @@ async def _stream_audio(device, frequency_hz: float, send_fn, audio_request_fn,
     Also computes FFT for the waterfall display and runs RDS decoding
     on the sustained IQ stream.  Keeps streaming until the audio request
     becomes inactive.
+
+    Configures the device (sample rate, optional gain) before activating
+    the stream so this works even if `scanner.sweep_once` has never been
+    called this session.
     """
     import numpy as np
     from signaldeck.engine.audio_pipeline import fm_demodulate
     from signaldeck.engine.scanner import compute_power_spectrum
 
     num_samples = int(sample_rate * chunk_duration_s)
+    # Configure the device BEFORE activating the stream. sweep_once does
+    # the same thing — without it, the RTL-SDR driver's buffer pipeline
+    # doesn't tick and readStream returns -1 (SOAPY_SDR_TIMEOUT) on every call.
+    device.set_sample_rate(sample_rate)
+    if gain_db is not None:
+        device.set_gain(gain_db)
     device.tune(frequency_hz)
     await asyncio.sleep(0.01)  # settle time
 
@@ -846,6 +857,7 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                                     device, audio_req["frequency_hz"],
                                     audio_stream_fn, audio_request_fn,
                                     sample_rate=2_000_000,
+                                    gain_db=cfg["devices"].get("gain", 40),
                                     fft_callback=on_fft,
                                     # gqrx has its own RDS polling loop; skip the duplicate
                                     # decode here to keep audio iterations fast.
