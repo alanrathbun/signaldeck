@@ -507,8 +507,6 @@ function dashboard() {
         if (resp.status === 401) {
           this.loginRequired = true;
           this._retryAfterLogin = { url, opts: options };
-          this.authRequired = true;
-          this.authenticated = false;
           return null;
         }
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
