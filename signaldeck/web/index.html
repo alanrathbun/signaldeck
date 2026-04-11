@@ -41,14 +41,6 @@
         <svg viewBox="0 0 20 20" width="16" height="16"><circle cx="10" cy="10" r="3" fill="currentColor"/><path d="M6 6a5.7 5.7 0 0 1 8 0" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M4 4a8.5 8.5 0 0 1 12 0" stroke="currentColor" stroke-width="1.5" fill="none" opacity="0.5"/></svg>
         Live
       </a>
-      <a href="#" :class="{ active: currentPage === 'signals' }" @click.prevent="navigate('signals')">
-        <svg viewBox="0 0 20 20" width="16" height="16"><rect x="2" y="12" width="3" height="6" rx="1" fill="currentColor"/><rect x="7" y="8" width="3" height="10" rx="1" fill="currentColor"/><rect x="12" y="4" width="3" height="14" rx="1" fill="currentColor"/><rect x="17" y="2" width="3" height="16" rx="1" fill="currentColor" opacity="0.5"/></svg>
-        Signals
-      </a>
-      <a href="#" :class="{ active: currentPage === 'activity' }" @click.prevent="navigate('activity')">
-        <svg viewBox="0 0 20 20" width="16" height="16"><polyline points="2,14 6,6 10,10 14,4 18,8" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        Activity
-      </a>
       <a href="#" :class="{ active: currentPage === 'recordings' }" @click.prevent="navigate('recordings')">
         <svg viewBox="0 0 20 20" width="16" height="16"><circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="10" cy="10" r="3" fill="currentColor"/></svg>
         Recordings
@@ -61,9 +53,17 @@
         <svg viewBox="0 0 20 20" width="16" height="16"><path d="M10 2C6.7 2 4 4.7 4 8c0 4.5 6 10 6 10s6-5.5 6-10c0-3.3-2.7-6-6-6z" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="10" cy="8" r="2" fill="currentColor"/></svg>
         Map
       </a>
+      <a href="#" :class="{ active: currentPage === 'status' }" @click.prevent="navigate('status')">
+        <svg viewBox="0 0 20 20" width="16" height="16"><path d="M3 3h14v14H3z" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M7 13V9M10 13V7M13 13v-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        Status
+      </a>
       <a href="#" :class="{ active: currentPage === 'settings' }" @click.prevent="navigate('settings')">
         <svg viewBox="0 0 20 20" width="16" height="16"><circle cx="10" cy="10" r="3" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M10 1v3M10 16v3M1 10h3M16 10h3M3.5 3.5l2 2M14.5 14.5l2 2M3.5 16.5l2-2M14.5 5.5l2-2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
         Settings
+      </a>
+      <a href="#" :class="{ active: currentPage === 'logs' }" @click.prevent="navigate('logs')">
+        <svg viewBox="0 0 20 20" width="16" height="16"><path d="M4 4h12v12H4z" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M7 8h6M7 11h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        Logs
       </a>
     </div>
 
@@ -80,6 +80,7 @@
       <div class="page-header">
         <h1>Live Scanner</h1>
         <div class="scanner-controls">
+          <span class="badge badge-blue" x-show="liveCurrentRange" x-text="formatRangeSummary(liveCurrentRange)"></span>
           <select class="form-select" x-model="scanMode">
             <option value="sweep">Sweep</option>
             <option value="bookmarks">Bookmarks</option>
@@ -90,20 +91,29 @@
         </div>
       </div>
 
-      <!-- Waterfall -->
-      <div class="card waterfall-card">
+      <!-- Waterfall (toggleable) -->
+      <div class="card waterfall-card" x-show="showWaterfall">
         <div class="card-header">
           <h3>Waterfall / Spectrogram</h3>
-          <span class="badge badge-blue" x-show="scanning">SCANNING</span>
+          <div style="display:flex;gap:6px;align-items:center">
+            <span class="badge badge-blue" x-show="audioPlaying" x-text="(audioFreqMhz || '--') + ' MHz'"></span>
+            <button class="btn btn-small" @click="showWaterfall = false; if (wsWaterfall) { wsWaterfall.close(); wsWaterfall = null; }">Hide</button>
+          </div>
         </div>
         <canvas id="waterfall-canvas" width="1024" height="250"></canvas>
+      </div>
+      <div x-show="!showWaterfall" style="margin-bottom:8px">
+        <button class="btn btn-small" @click="showWaterfall = true; $nextTick(() => { waterfall = new Waterfall('waterfall-canvas'); const wsBase = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host; connectWsWaterfall(wsBase + '/ws/waterfall'); })">
+          Show Waterfall
+        </button>
       </div>
 
       <!-- Audio Player (above signals so clicking tune is convenient) -->
       <div class="card" :class="audioPlaying ? 'card-active' : ''">
         <div class="card-header">
           <h3>Audio Monitor</h3>
-          <span class="badge badge-green" x-show="audioPlaying" x-text="'Listening: ' + (audioFreqMhz || '--') + ' MHz'"></span>
+          <span class="badge badge-green" x-show="audioPlaying && !isGqrxBackend()" x-text="'Listening: ' + (audioFreqMhz || '--') + ' MHz'"></span>
+          <span class="badge badge-green" x-show="audioPlaying && isGqrxBackend()" x-text="'gqrx tuned: ' + (audioFreqMhz || '--') + ' MHz'"></span>
         </div>
         <div class="audio-controls">
           <div class="audio-freq">
@@ -136,8 +146,25 @@
       <div class="card">
         <div class="card-header">
           <h3>Active Signals</h3>
-          <span class="badge badge-green" x-text="filteredLiveSignals.length + ' active'"></span>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span class="badge badge-green" x-text="filteredLiveSignals.length + ' active'"></span>
+            <button class="btn btn-small btn-danger" @click="clearLiveSignals()" title="Clear live signals">Clear</button>
+            <button class="btn btn-small" @click="showColumnPicker = !showColumnPicker" title="Show/hide columns">Columns</button>
+          </div>
         </div>
+
+        <!-- Column picker -->
+        <div class="signal-filters" x-show="showColumnPicker" x-cloak style="flex-wrap:wrap">
+          <template x-for="col in allLiveColumns" :key="col.key">
+            <label class="switch-control compact" style="margin-right:10px">
+              <input type="checkbox" :checked="liveVisibleCols.includes(col.key)"
+                     @change="toggleLiveCol(col.key)">
+              <span class="switch-slider"></span>
+              <span class="switch-text" x-text="col.label"></span>
+            </label>
+          </template>
+        </div>
+
         <!-- Filters -->
         <div class="signal-filters">
           <select class="form-select filter-select" x-model="liveFilterMod" title="Filter by modulation">
@@ -152,35 +179,96 @@
               <option :value="proto" x-text="proto"></option>
             </template>
           </select>
-          <button class="btn btn-small" @click="liveFilterMod=''; liveFilterProto=''" x-show="liveFilterMod || liveFilterProto">Clear Filters</button>
+          <select class="form-select filter-select" x-model="liveFilterSignalClass" title="Filter by signal classification">
+            <option value="">All Signal Classes</option>
+            <template x-for="signalClass in liveSignalClasses" :key="signalClass">
+              <option :value="signalClass" x-text="signalClass"></option>
+            </template>
+          </select>
+          <input type="number" class="form-input filter-select" x-model.number="liveFilterMinPower"
+                 placeholder="Min dBFS" title="Minimum signal strength" style="width:100px">
+          <input type="text" class="form-input filter-select" x-model="liveFilterFreq"
+                 placeholder="Freq MHz" title="Filter by frequency (e.g. 162 or 88-108)" style="width:110px">
+          <select class="form-select filter-select" x-model="liveFilterDecoder" title="Filter by decoder">
+            <option value="">All Decoders</option>
+            <template x-for="dec in liveDecoders" :key="dec">
+              <option :value="dec" x-text="dec"></option>
+            </template>
+          </select>
+          <input type="number" class="form-input filter-select" x-model.number="liveFilterBandwidthMin"
+                 placeholder="BW min Hz" title="Minimum bandwidth (Hz)" style="width:100px">
+          <input type="number" class="form-input filter-select" x-model.number="liveFilterBandwidthMax"
+                 placeholder="BW max Hz" title="Maximum bandwidth (Hz)" style="width:100px">
+          <button class="btn btn-small" @click="clearLiveFilters()"
+            x-show="liveFilterMod || liveFilterProto || liveFilterSignalClass || liveFilterMinPower || liveFilterFreq || liveFilterDecoder || liveFilterBandwidthMin || liveFilterBandwidthMax">Clear</button>
         </div>
+
         <div class="table-wrap">
           <table class="data-table">
             <thead>
               <tr>
-                <th>Frequency</th>
-                <th>Bandwidth</th>
-                <th>Power</th>
-                <th>Modulation</th>
-                <th>Protocol</th>
+                <th x-show="liveVisibleCols.includes('frequency')" @click="sortLive('frequency')" class="sortable-th">
+                  Frequency <span x-text="liveSortIcon('frequency')"></span></th>
+                <th x-show="liveVisibleCols.includes('bandwidth')" @click="sortLive('bandwidth')" class="sortable-th">
+                  Bandwidth <span x-text="liveSortIcon('bandwidth')"></span></th>
+                <th x-show="liveVisibleCols.includes('power')" @click="sortLive('power')" class="sortable-th">
+                  Power <span x-text="liveSortIcon('power')"></span></th>
+                <th x-show="liveVisibleCols.includes('modulation')" @click="sortLive('modulation')" class="sortable-th">
+                  Modulation <span x-text="liveSortIcon('modulation')"></span></th>
+                <th x-show="liveVisibleCols.includes('protocol')" @click="sortLive('protocol')" class="sortable-th">
+                  Protocol <span x-text="liveSortIcon('protocol')"></span></th>
+                <th x-show="liveVisibleCols.includes('rds')">RDS</th>
+                <th x-show="liveVisibleCols.includes('hits')" @click="sortLive('hits')" class="sortable-th">
+                  Hits <span x-text="liveSortIcon('hits')"></span></th>
+                <th x-show="liveVisibleCols.includes('last_seen')" @click="sortLive('last_seen')" class="sortable-th">
+                  Last Seen <span x-text="liveSortIcon('last_seen')"></span></th>
+                <th x-show="liveVisibleCols.includes('first_seen')" @click="sortLive('first_seen')" class="sortable-th">
+                  First Seen <span x-text="liveSortIcon('first_seen')"></span></th>
+                <th x-show="liveVisibleCols.includes('confidence')" @click="sortLive('confidence')" class="sortable-th">
+                  Confidence <span x-text="liveSortIcon('confidence')"></span></th>
+                <th x-show="liveVisibleCols.includes('signal_class')" @click="sortLive('signal_class')" class="sortable-th">
+                  Signal Class <span x-text="liveSortIcon('signal_class')"></span></th>
+                <th x-show="liveVisibleCols.includes('decoder')" @click="sortLive('decoder')" class="sortable-th">
+                  Decoder <span x-text="liveSortIcon('decoder')"></span></th>
+                <th x-show="liveVisibleCols.includes('activity_type')" @click="sortLive('activity_type')" class="sortable-th">
+                  Activity <span x-text="liveSortIcon('activity_type')"></span></th>
+                <th x-show="liveVisibleCols.includes('activity_summary')">Last Activity</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              <template x-for="sig in filteredLiveSignals" :key="sig.frequency">
+              <template x-for="sig in sortedLiveSignals" :key="sig.frequency">
                 <tr :class="audioFreqMhz && Math.abs(sig.frequency - audioFreqMhz * 1e6) < 1000 ? 'row-active' : ''">
-                  <td class="freq-cell clickable" @click="tuneAndListen(sig.frequency)" x-text="formatFreq(sig.frequency)" title="Click to listen"></td>
-                  <td x-text="sig.bandwidth ? (sig.bandwidth / 1000).toFixed(1) + ' kHz' : '--'"></td>
-                  <td>
+                  <td x-show="liveVisibleCols.includes('frequency')" class="freq-cell clickable"
+                      @click="tuneAndListen(sig.frequency, sig.modulation)" x-text="formatFreq(sig.frequency)" title="Click to listen"></td>
+                  <td x-show="liveVisibleCols.includes('bandwidth')" x-text="sig.bandwidth ? (sig.bandwidth / 1000).toFixed(1) + ' kHz' : '--'"></td>
+                  <td x-show="liveVisibleCols.includes('power')">
                     <div class="power-indicator">
                       <div class="power-bar" :style="'width:' + powerPct(sig.power) + '%;background:' + powerColor(sig.power)"></div>
                       <span class="power-label" x-text="formatPower(sig.power)"></span>
                     </div>
                   </td>
-                  <td><span class="badge" :class="modBadge(sig.modulation)" x-text="sig.modulation || '--'"></span></td>
-                  <td x-text="sig.protocol || '--'"></td>
+                  <td x-show="liveVisibleCols.includes('modulation')"><span class="badge" :class="modBadge(sig.modulation)" x-text="sig.modulation || '--'"></span></td>
+                  <td x-show="liveVisibleCols.includes('protocol')" x-text="sig.protocol || '--'"></td>
+                  <td x-show="liveVisibleCols.includes('rds')">
+                    <template x-if="sig.rds && sig.rds.ps_name">
+                      <span>
+                        <span class="badge badge-blue" x-text="sig.rds.ps_name"></span>
+                        <span x-show="sig.rds.radio_text" style="font-size:11px;color:#8b949e;margin-left:4px" x-text="sig.rds.radio_text"></span>
+                      </span>
+                    </template>
+                    <span x-show="!sig.rds || !sig.rds.ps_name">--</span>
+                  </td>
+                  <td x-show="liveVisibleCols.includes('hits')" x-text="sig._hits || 1"></td>
+                  <td x-show="liveVisibleCols.includes('last_seen')" x-text="sig._updated ? new Date(sig._updated).toLocaleTimeString() : '--'"></td>
+                  <td x-show="liveVisibleCols.includes('first_seen')" x-text="sig.first_seen ? formatTime(sig.first_seen) : '--'"></td>
+                  <td x-show="liveVisibleCols.includes('confidence')" x-text="sig.confidence ? (sig.confidence * 100).toFixed(0) + '%' : '--'"></td>
+                  <td x-show="liveVisibleCols.includes('signal_class')" x-text="sig.signal_class || '--'"></td>
+                  <td x-show="liveVisibleCols.includes('decoder')"><span class="badge badge-blue" x-show="sig.decoder" x-text="sig.decoder"></span><span x-show="!sig.decoder">--</span></td>
+                  <td x-show="liveVisibleCols.includes('activity_type')" x-text="sig.activity_type || '--'"></td>
+                  <td x-show="liveVisibleCols.includes('activity_summary')" class="summary-cell" x-text="sig.activity_summary || '--'"></td>
                   <td class="action-buttons">
-                    <button class="btn btn-sm btn-primary" @click="tuneAndListen(sig.frequency)" title="Listen">
+                    <button class="btn btn-sm btn-primary" @click="tuneAndListen(sig.frequency, sig.modulation)" title="Listen">
                       <svg viewBox="0 0 20 20" width="12" height="12"><polygon points="4,2 18,10 4,18" fill="currentColor"/></svg>
                     </button>
                     <button class="btn btn-sm btn-success" @click="quickBookmark(sig)" title="Bookmark">
@@ -190,7 +278,7 @@
                 </tr>
               </template>
               <tr x-show="filteredLiveSignals.length === 0">
-                <td colspan="6" class="empty-state">No active signals. Start the scanner to begin.</td>
+                <td :colspan="liveVisibleCols.length + 1" class="empty-state">No active signals. Start the scanner to begin.</td>
               </tr>
             </tbody>
           </table>
@@ -198,120 +286,6 @@
       </div>
     </section>
 
-    <!-- ==================== SIGNALS ==================== -->
-    <section x-show="currentPage === 'signals'" x-cloak>
-      <div class="page-header">
-        <h1>Known Signals</h1>
-        <button class="btn btn-primary" @click="fetchSignals()">Refresh</button>
-      </div>
-
-      <div class="card">
-        <div class="table-wrap">
-          <table class="data-table sortable">
-            <thead>
-              <tr>
-                <th @click="sortSignals('frequency')" class="sortable-th">
-                  Frequency (MHz) <span x-text="sortIcon('frequency')"></span>
-                </th>
-                <th @click="sortSignals('bandwidth')" class="sortable-th">
-                  Bandwidth <span x-text="sortIcon('bandwidth')"></span>
-                </th>
-                <th @click="sortSignals('modulation')" class="sortable-th">
-                  Modulation <span x-text="sortIcon('modulation')"></span>
-                </th>
-                <th @click="sortSignals('protocol')" class="sortable-th">
-                  Protocol <span x-text="sortIcon('protocol')"></span>
-                </th>
-                <th @click="sortSignals('first_seen')" class="sortable-th">
-                  First Seen <span x-text="sortIcon('first_seen')"></span>
-                </th>
-                <th @click="sortSignals('last_seen')" class="sortable-th">
-                  Last Seen <span x-text="sortIcon('last_seen')"></span>
-                </th>
-                <th @click="sortSignals('hits')" class="sortable-th">
-                  Hits <span x-text="sortIcon('hits')"></span>
-                </th>
-                <th @click="sortSignals('power')" class="sortable-th">
-                  Strength <span x-text="sortIcon('power')"></span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <template x-for="sig in sortedSignals" :key="sig.id || sig.frequency">
-                <tr>
-                  <td class="freq-cell clickable" @click="navigate('live'); tuneFrequency(sig.frequency)" x-text="formatFreq(sig.frequency)"></td>
-                  <td x-text="sig.bandwidth ? (sig.bandwidth / 1000).toFixed(1) + ' kHz' : '--'"></td>
-                  <td><span class="badge" :class="modBadge(sig.modulation)" x-text="sig.modulation || '--'"></span></td>
-                  <td x-text="sig.protocol || '--'"></td>
-                  <td x-text="formatTime(sig.first_seen)"></td>
-                  <td x-text="formatTime(sig.last_seen)"></td>
-                  <td x-text="sig.hits || 0"></td>
-                  <td>
-                    <div class="power-indicator">
-                      <div class="power-bar" :style="'width:' + powerPct(sig.power) + '%;background:' + powerColor(sig.power)"></div>
-                      <span class="power-label" x-text="formatPower(sig.power)"></span>
-                    </div>
-                  </td>
-                </tr>
-              </template>
-              <tr x-show="signals.length === 0">
-                <td colspan="8" class="empty-state">No signals recorded yet.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </section>
-
-    <!-- ==================== ACTIVITY ==================== -->
-    <section x-show="currentPage === 'activity'" x-cloak>
-      <div class="page-header">
-        <h1>Activity Log</h1>
-        <div class="header-controls">
-          <select class="form-select" x-model.number="activityLimit" @change="fetchActivity()">
-            <option value="25">25 entries</option>
-            <option value="50">50 entries</option>
-            <option value="100">100 entries</option>
-            <option value="500">500 entries</option>
-          </select>
-          <label class="toggle-label">
-            <input type="checkbox" x-model="activityAutoRefresh" @change="toggleActivityRefresh()">
-            Auto-refresh
-          </label>
-          <button class="btn btn-primary" @click="fetchActivity()">Refresh</button>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="table-wrap">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Frequency</th>
-                <th>Decoder</th>
-                <th>Type</th>
-                <th>Summary</th>
-              </tr>
-            </thead>
-            <tbody>
-              <template x-for="item in activity" :key="item.id || item.timestamp">
-                <tr>
-                  <td class="time-cell" x-text="formatTime(item.timestamp)"></td>
-                  <td class="freq-cell" x-text="formatFreq(item.frequency)"></td>
-                  <td><span class="badge badge-blue" x-text="item.decoder || '--'"></span></td>
-                  <td x-text="item.type || '--'"></td>
-                  <td class="summary-cell" x-text="item.summary || item.message || '--'"></td>
-                </tr>
-              </template>
-              <tr x-show="activity.length === 0">
-                <td colspan="5" class="empty-state">No activity recorded.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </section>
 
     <!-- ==================== RECORDINGS ==================== -->
     <section x-show="currentPage === 'recordings'" x-cloak>
@@ -326,7 +300,7 @@
             <div class="recording-info">
               <div class="recording-filename" x-text="rec.filename"></div>
               <div class="recording-meta">
-                <span class="freq-cell" x-text="formatFreq(rec.frequency)"></span>
+                <span class="freq-cell" x-text="formatFreq(rec.frequency_hz || rec.frequency)"></span>
                 <span x-text="formatTime(rec.timestamp)"></span>
                 <span x-text="rec.duration ? rec.duration.toFixed(1) + 's' : '--'"></span>
               </div>
@@ -417,7 +391,7 @@
             <tbody>
               <template x-for="bm in bookmarks" :key="bm.id">
                 <tr>
-                  <td class="freq-cell" x-text="formatFreq(bm.frequency)"></td>
+                  <td class="freq-cell" x-text="formatFreq(bm.frequency_hz)"></td>
                   <td x-text="bm.label"></td>
                   <td><span class="badge" :class="modBadge(bm.modulation)" x-text="bm.modulation || '--'"></span></td>
                   <td x-text="bm.decoder || '--'"></td>
@@ -425,7 +399,7 @@
                     <span class="priority-stars" x-text="'*'.repeat(bm.priority || 0).replace(/\*/g, '\u2605')"></span>
                   </td>
                   <td>
-                    <button class="btn btn-sm btn-primary" @click="navigate('live'); tuneFrequency(bm.frequency)">Tune</button>
+                    <button class="btn btn-sm btn-primary" @click="navigate('live'); tuneAndListen(bm.frequency_hz, bm.modulation)">Tune</button>
                     <button class="btn btn-sm btn-danger" @click="deleteBookmark(bm.id)">Delete</button>
                   </td>
                 </tr>
@@ -452,6 +426,203 @@
       </div>
     </section>
 
+    <!-- ==================== STATUS ==================== -->
+    <section x-show="currentPage === 'status'" x-cloak>
+      <div class="page-header">
+        <h1>Status</h1>
+        <div class="header-controls">
+          <button class="btn btn-primary" @click="fetchStatusPage()">Refresh</button>
+        </div>
+      </div>
+
+      <div class="settings-grid">
+        <!-- Service Process -->
+        <div class="card">
+          <div class="card-header">
+            <h3>Service</h3>
+            <span class="badge"
+                  :class="processStateBadgeClass()"
+                  x-text="processStateLabel()"></span>
+          </div>
+          <div class="settings-list">
+            <div class="setting-row">
+              <span class="setting-label">PID</span>
+              <span class="setting-value" x-text="processStatus.pid || '--'"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Uptime</span>
+              <span class="setting-value" x-text="formatUptime(processStatus.uptime_seconds)"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Supervisor</span>
+              <span class="setting-value"
+                    x-text="processStatus.supervisor ? (processStatus.supervisor.kind === 'systemd-user' ? 'systemd --user' : 'unmanaged') : '--'"></span>
+            </div>
+            <div class="setting-row" x-show="processStatus.supervisor && processStatus.supervisor.active_state">
+              <span class="setting-label">Unit State</span>
+              <span class="setting-value"
+                    x-text="processStatus.supervisor ? ((processStatus.supervisor.active_state || '--') + ' / ' + (processStatus.supervisor.sub_state || '--')) : '--'"></span>
+            </div>
+            <div class="setting-row" x-show="!processStatus.can_control && processStatus.control_reason">
+              <span class="setting-label" style="align-self:flex-start">Note</span>
+              <span class="setting-value" style="font-size:0.85em;text-align:right;max-width:260px"
+                    x-text="processStatus.control_reason"></span>
+            </div>
+          </div>
+          <div class="header-controls" style="margin-top:12px;gap:8px">
+            <button class="btn btn-success"
+                    :disabled="!processStatus.can_control || processActionBusy"
+                    @click="processAction('start')">Start</button>
+            <button class="btn btn-danger"
+                    :disabled="!processStatus.can_control || processActionBusy"
+                    @click="confirmProcessAction('stop')">Stop</button>
+            <button class="btn btn-primary"
+                    :disabled="!processStatus.can_control || processActionBusy"
+                    @click="confirmProcessAction('restart')">Restart</button>
+          </div>
+          <div x-show="processActionMessage" style="margin-top:8px;font-size:0.9em;color:#8b949e"
+               x-text="processActionMessage"></div>
+        </div>
+
+        <!-- Scanner Status -->
+        <div class="card">
+          <div class="card-header">
+            <h3>Scanner</h3>
+            <span class="badge" :class="scannerStatus.status === 'running' ? 'badge-green' : 'badge-orange'"
+                  x-text="scannerStatus.status === 'running' ? 'Active' : 'Idle'"></span>
+          </div>
+          <div class="settings-list">
+            <div class="setting-row">
+              <span class="setting-label">Mode</span>
+              <span class="setting-value" x-text="scannerStatus.mode || '--'"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Backend</span>
+              <span class="setting-value" x-text="scannerStatus.backend || '--'"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Scanner Device</span>
+              <span class="setting-value" x-text="scannerStatus.scanner_device || '--'"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Tuner Device</span>
+              <span class="setting-value" x-text="scannerStatus.tuner_device || '--'"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Connected Devices -->
+        <div class="card">
+          <div class="card-header">
+            <h3>Connected Devices</h3>
+          </div>
+          <div class="settings-list">
+            <div class="setting-row">
+              <span class="setting-label">Active Devices</span>
+              <span class="setting-value" x-text="scannerStatus.active_devices ?? '--'"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">WebSocket Clients</span>
+              <span class="setting-value" x-text="statusData.ws_clients ?? '--'"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Scanning SDR</span>
+              <span class="setting-value" x-text="statusData.device_status && statusData.device_status.scanner ? statusData.device_status.scanner.label : '--'"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Scanner Driver</span>
+              <span class="setting-value" x-text="statusData.device_status && statusData.device_status.scanner ? statusData.device_status.scanner.driver : '--'"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Scanner Serial</span>
+              <span class="setting-value" x-text="statusData.device_status && statusData.device_status.scanner ? statusData.device_status.scanner.serial : '--'"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Scanner Status</span>
+              <span class="setting-value" x-text="statusData.device_status && statusData.device_status.scanner ? statusData.device_status.scanner.status : '--'"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Gain</span>
+              <span class="setting-value" x-text="statusData.device_status && statusData.device_status.scanner && statusData.device_status.scanner.gain_db != null ? statusData.device_status.scanner.gain_db + ' dB' : '--'"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Sample Rate</span>
+              <span class="setting-value" x-text="statusData.device_status && statusData.device_status.scanner && statusData.device_status.scanner.sample_rate_hz ? (statusData.device_status.scanner.sample_rate_hz / 1e6).toFixed(3) + ' MS/s' : '--'"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Tuner / Player</span>
+              <span class="setting-value" x-text="statusData.device_status && statusData.device_status.tuner ? statusData.device_status.tuner.label : '--'"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Tuner Status</span>
+              <span class="setting-value" x-text="statusData.device_status && statusData.device_status.tuner ? statusData.device_status.tuner.status : '--'"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Database Stats -->
+        <div class="card">
+          <div class="card-header">
+            <h3>Database</h3>
+          </div>
+          <div class="settings-list">
+            <div class="setting-row">
+              <span class="setting-label">Signals</span>
+              <span class="setting-value" x-text="statusData.db_stats ? statusData.db_stats.signals : '--'"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Activity Entries</span>
+              <span class="setting-value" x-text="statusData.db_stats ? statusData.db_stats.activity : '--'"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Bookmarks</span>
+              <span class="setting-value" x-text="statusData.db_stats ? statusData.db_stats.bookmarks : '--'"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Database Size</span>
+              <span class="setting-value" x-text="statusData.db_stats ? (statusData.db_stats.db_size / 1024).toFixed(1) + ' KB' : '--'"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Session Info -->
+        <div class="card">
+          <div class="card-header">
+            <h3>Session</h3>
+          </div>
+          <div class="settings-list">
+            <div class="setting-row">
+              <span class="setting-label">Log File</span>
+              <span class="setting-value" style="font-size:0.85em"
+                    x-text="statusData.session_log || '--'"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-label">Started</span>
+              <span class="setting-value" x-text="statusData.start_time ? formatTime(statusData.start_time) : '--'"></span>
+            </div>
+            <div class="setting-row">
+              <a href="#logs" @click.prevent="navigate('logs')" style="color:#58a6ff">View Logs &rarr;</a>
+            </div>
+          </div>
+        </div>
+
+        <!-- Analytics (moved from Settings) -->
+        <div class="card">
+          <div class="card-header">
+            <h3>Signal Analytics</h3>
+          </div>
+          <canvas id="protocol-chart" width="400" height="200"></canvas>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3>Hourly Activity</h3>
+          </div>
+          <canvas id="activity-chart" width="400" height="200"></canvas>
+        </div>
+      </div>
+    </section>
+
     <!-- ==================== SETTINGS ==================== -->
     <section x-show="currentPage === 'settings'" x-cloak>
       <div class="page-header">
@@ -463,21 +634,6 @@
       </div>
 
       <div class="settings-grid">
-        <!-- Scanner Status -->
-        <div class="card">
-          <div class="card-header">
-            <h3>Scanner Status</h3>
-            <span class="badge" :class="scannerStatus.status === 'running' ? 'badge-green' : 'badge-orange'"
-                  x-text="scannerStatus.status === 'running' ? 'Active' : 'Idle'"></span>
-          </div>
-          <div class="settings-list">
-            <div class="setting-row">
-              <span class="setting-label">Mode</span>
-              <span class="setting-value" x-text="scannerStatus.mode || '--'"></span>
-            </div>
-          </div>
-        </div>
-
         <!-- Device & Scanner Settings (editable) -->
         <div class="card">
           <div class="card-header">
@@ -493,6 +649,11 @@
               <label class="setting-label" for="set-squelch">Squelch Offset (dB above noise floor)</label>
               <input id="set-squelch" type="number" class="form-input setting-input" min="1" max="50" step="1"
                      x-model.number="editSettings.squelch_offset">
+            </div>
+            <div class="setting-row">
+              <label class="setting-label" for="set-min-strength">Min Signal Strength (dBFS)</label>
+              <input id="set-min-strength" type="number" class="form-input setting-input" min="-80" max="0" step="1"
+                     x-model.number="editSettings.min_signal_strength">
             </div>
             <div class="setting-row">
               <label class="setting-label" for="set-dwell">Dwell Time (ms)</label>
@@ -511,11 +672,67 @@
           </div>
         </div>
 
+        <!-- Scan Profiles -->
+        <div class="card" :style="editSettings.scan_ranges.length > 0 ? 'opacity:0.55' : ''">
+          <div class="card-header">
+            <h3>Scan Profiles</h3>
+            <span class="badge"
+                  :class="editSettings.scan_ranges.length > 0 ? 'badge-orange' : 'badge-green'"
+                  x-text="editSettings.scan_ranges.length > 0 ? 'Inactive' : 'Active'"></span>
+          </div>
+          <div class="settings-list">
+            <div class="setting-row" style="font-size:0.85em;color:#8b949e;line-height:1.4">
+              Profiles supply a sweep plan only when the Scan Ranges list above is empty.
+              As soon as you add a range, profiles are ignored — the Scan Ranges list becomes
+              the single source of truth.
+            </div>
+            <div class="switch-list">
+              <template x-for="profile in availableScanProfiles" :key="profile.key">
+                <label class="switch-row" :title="profile.description">
+                  <span class="switch-copy">
+                    <span class="switch-label" x-text="profile.label"></span>
+                    <span class="switch-description" x-text="profile.description"></span>
+                  </span>
+                  <span class="switch-control">
+                    <input type="checkbox"
+                           :checked="editSettings.scan_profiles.includes(profile.key)"
+                           @change="toggleScanProfile(profile.key)">
+                    <span class="switch-slider"></span>
+                  </span>
+                </label>
+              </template>
+            </div>
+            <div class="setting-row" x-show="availableScanProfiles.length === 0">
+              <span class="setting-label">No scan profiles available.</span>
+            </div>
+          </div>
+        </div>
+
         <!-- Scan Ranges (editable) -->
         <div class="card">
           <div class="card-header">
             <h3>Scan Ranges</h3>
-            <button class="btn btn-small btn-primary" @click="addScanRange()">+ Add Range</button>
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-small btn-primary" @click="addScanRange()">+ Custom</button>
+              <button class="btn btn-small" @click="showDefaultRanges = !showDefaultRanges"
+                      :style="showDefaultRanges ? 'background:#1f6feb;color:#fff' : ''">
+                + Preset
+              </button>
+            </div>
+          </div>
+          <!-- Default range presets -->
+          <div class="settings-list" x-show="showDefaultRanges" x-transition>
+            <div style="padding:8px 12px;display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+              <template x-for="preset in defaultScanRanges" :key="preset.label">
+                <button class="btn btn-small"
+                        :style="editSettings.scan_ranges.some(r => r.start_mhz === preset.start_mhz && r.end_mhz === preset.end_mhz)
+                          ? 'opacity:0.4;cursor:default' : ''"
+                        @click="addDefaultRange(preset)"
+                        x-text="`${preset.label} (${preset.start_mhz}–${preset.end_mhz})`">
+                </button>
+              </template>
+              <button class="btn btn-small btn-primary" @click="addAllDefaults()" style="margin-left:auto">Add All</button>
+            </div>
           </div>
           <div class="settings-list">
             <template x-for="(range, i) in editSettings.scan_ranges" :key="i">
@@ -528,79 +745,214 @@
                 <input type="number" class="form-input" style="width:100px" placeholder="End MHz" step="0.1"
                        x-model.number="editSettings.scan_ranges[i].end_mhz">
                 <span style="color:#8b949e">MHz</span>
+                <input type="number" class="form-input" style="width:90px" placeholder="Step kHz" step="0.5"
+                       x-model.number="editSettings.scan_ranges[i].step_khz">
+                <input type="number" class="form-input" style="width:80px" placeholder="Priority" step="1"
+                       x-model.number="editSettings.scan_ranges[i].priority">
                 <button class="btn btn-small btn-danger" @click="removeScanRange(i)" title="Remove">&times;</button>
               </div>
             </template>
             <div class="setting-row" x-show="editSettings.scan_ranges.length === 0">
-              <span class="setting-label">No ranges configured. Click "+ Add Range" above.</span>
+              <span class="setting-label">No ranges configured. Scan Profiles below will supply the sweep plan until you add one.</span>
             </div>
           </div>
         </div>
 
-        <!-- Audio (read-only info) -->
+        <!-- Device Roles -->
+        <div class="card">
+          <div class="card-header">
+            <h3>Device Roles</h3>
+          </div>
+          <div class="settings-list">
+            <div class="setting-row">
+              <label class="setting-label" for="set-scanner-device">Scanner Device</label>
+              <select id="set-scanner-device" class="form-select setting-input"
+                      x-model="editSettings.scanner_device">
+                <option value="none">None</option>
+                <template x-for="d in (settings.devices ? (settings.devices.discovered || []) : [])" :key="d.serial">
+                  <option :value="d.serial" x-text="d.label || d.serial"></option>
+                </template>
+                <!-- Keep a stable option for a persisted device that is not currently detected
+                     so the select stays bound to the saved preference. -->
+                <template x-if="editSettings.scanner_device && editSettings.scanner_device !== 'none'
+                                && !(settings.devices && (settings.devices.discovered || []).some(d => d.serial === editSettings.scanner_device))">
+                  <option :value="editSettings.scanner_device"
+                          x-text="editSettings.scanner_device + ' (not detected)'"></option>
+                </template>
+              </select>
+            </div>
+            <div class="setting-row">
+              <label class="setting-label" for="set-tuner-device">Tuner / Player (gqrx)</label>
+              <select id="set-tuner-device" class="form-select setting-input"
+                      x-model="editSettings.tuner_device">
+                <option value="none">None</option>
+                <template x-for="g in (settings.devices ? (settings.devices.gqrx_instances || []) : [])" :key="g.host + ':' + g.port">
+                  <option :value="g.host + ':' + g.port" x-text="g.host + ':' + g.port"></option>
+                </template>
+                <template x-if="editSettings.tuner_device && editSettings.tuner_device !== 'none'
+                                && !(settings.devices && (settings.devices.gqrx_instances || []).some(g => (g.host + ':' + g.port) === editSettings.tuner_device))">
+                  <option :value="editSettings.tuner_device"
+                          x-text="editSettings.tuner_device + ' (not detected)'"></option>
+                </template>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Audio (editable) -->
         <div class="card">
           <div class="card-header">
             <h3>Audio</h3>
           </div>
           <div class="settings-list">
             <div class="setting-row">
-              <span class="setting-label">Sample Rate</span>
-              <span class="setting-value" x-text="settings.audio ? settings.audio.sample_rate + ' Hz' : '--'"></span>
+              <label class="setting-label" for="set-sample-rate">Sample Rate</label>
+              <select id="set-sample-rate" class="form-select setting-input"
+                      x-model.number="editSettings.sample_rate">
+                <option value="22050">22050 Hz</option>
+                <option value="44100">44100 Hz</option>
+                <option value="48000">48000 Hz</option>
+              </select>
             </div>
             <div class="setting-row">
-              <span class="setting-label">Recording Directory</span>
-              <span class="setting-value" x-text="settings.audio ? settings.audio.recording_dir : '--'"></span>
+              <label class="setting-label" for="set-rec-dir">Recording Directory</label>
+              <input id="set-rec-dir" type="text" class="form-input setting-input"
+                     x-model="editSettings.recording_dir">
             </div>
             <div class="setting-row">
               <span class="setting-label">Format</span>
-              <span class="setting-value" x-text="settings.audio ? settings.audio.format.toUpperCase() : '--'"></span>
+              <span class="setting-value">WAV</span>
             </div>
           </div>
         </div>
 
-        <!-- Storage (read-only) -->
+        <!-- Logging -->
         <div class="card">
           <div class="card-header">
-            <h3>Storage</h3>
+            <h3>Logging</h3>
           </div>
           <div class="settings-list">
             <div class="setting-row">
-              <span class="setting-label">Database Path</span>
-              <span class="setting-value" x-text="settings.storage ? settings.storage.database_path : '--'"></span>
+              <label class="setting-label" for="set-log-level">Log Level</label>
+              <select id="set-log-level" class="form-select setting-input"
+                      x-model="editSettings.log_level">
+                <option value="DEBUG">DEBUG</option>
+                <option value="INFO">INFO</option>
+                <option value="WARNING">WARNING</option>
+                <option value="ERROR">ERROR</option>
+              </select>
             </div>
           </div>
         </div>
 
-        <!-- Authentication (read-only) -->
+        <!-- Authentication -->
         <div class="card">
           <div class="card-header">
             <h3>Authentication</h3>
+            <span class="badge" :class="settings.auth && settings.auth.enabled ? 'badge-green' : 'badge-orange'"
+                  x-text="settings.auth && settings.auth.enabled ? 'Enabled' : 'Disabled'"></span>
           </div>
           <div class="settings-list">
             <div class="setting-row">
               <span class="setting-label">Status</span>
-              <span class="setting-value">
-                <span class="badge" :class="settings.auth && settings.auth.enabled ? 'badge-green' : 'badge-orange'"
-                      x-text="settings.auth && settings.auth.enabled ? 'Enabled' : 'Disabled'"></span>
-              </span>
+              <button class="btn btn-small"
+                      :class="settings.auth && settings.auth.enabled ? 'btn-danger' : 'btn-success'"
+                      @click="toggleAuth()">
+                <span x-text="settings.auth && settings.auth.enabled ? 'Disable Auth' : 'Enable Auth'"></span>
+              </button>
+            </div>
+            <template x-if="settings.auth && settings.auth.enabled">
+              <div>
+                <div class="setting-row">
+                  <span class="setting-label">API Token</span>
+                  <div style="display:flex;gap:8px;align-items:center">
+                    <code style="font-size:0.8em;background:#161b22;padding:4px 8px;border-radius:4px"
+                          x-text="showApiToken ? (currentApiToken || '...') : '••••••••'"></code>
+                    <button class="btn btn-small btn-primary" @click="showApiToken = !showApiToken; if(showApiToken) fetchApiToken()">
+                      <span x-text="showApiToken ? 'Hide' : 'Show'"></span>
+                    </button>
+                    <button class="btn btn-small btn-primary" @click="copyApiToken()" x-show="showApiToken">Copy</button>
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <span class="setting-label">Regenerate Token</span>
+                  <button class="btn btn-small btn-danger" @click="if(confirm('Regenerate API token? All existing tokens will be invalidated.')) regenerateToken()">
+                    Regenerate
+                  </button>
+                </div>
+                <div class="setting-row" style="flex-direction:column;align-items:flex-start;gap:8px">
+                  <span class="setting-label">Change Password</span>
+                  <div style="display:flex;gap:8px;flex-wrap:wrap">
+                    <input type="password" class="form-input" placeholder="Current password"
+                           x-model="changePass.current" style="width:160px">
+                    <input type="password" class="form-input" placeholder="New password"
+                           x-model="changePass.newPass" style="width:160px">
+                    <input type="password" class="form-input" placeholder="Confirm"
+                           x-model="changePass.confirm" style="width:160px">
+                    <button class="btn btn-small btn-success" @click="changePassword()">Change</button>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- Data Management -->
+        <div class="card">
+          <div class="card-header">
+            <h3>Data Management</h3>
+          </div>
+          <div class="settings-list">
+            <div class="setting-row">
+              <span class="setting-label">Database</span>
+              <span class="setting-value" style="font-size:0.85em"
+                    x-text="settings.storage ? settings.storage.database_path : '--'"></span>
+            </div>
+            <div class="setting-row" style="flex-wrap:wrap;gap:8px">
+              <button class="btn btn-small btn-danger" @click="clearData('signals')">Clear Signals</button>
+              <button class="btn btn-small btn-danger" @click="clearData('activity')">Clear Activity</button>
+              <button class="btn btn-small btn-danger" @click="clearData('bookmarks')">Clear Bookmarks</button>
+              <button class="btn btn-small btn-danger" @click="clearData('recordings')">Clear Recordings</button>
+              <button class="btn btn-small btn-danger" @click="deleteLogs()">Delete All Logs</button>
+            </div>
+            <div class="setting-row">
+              <button class="btn btn-danger"
+                      @click="if(confirm('Reset ALL data? This cannot be undone.')) clearData('all')">
+                Reset All Data
+              </button>
             </div>
           </div>
         </div>
 
-        <!-- Analytics -->
-        <div class="card">
-          <div class="card-header">
-            <h3>Signal Analytics</h3>
-          </div>
-          <canvas id="protocol-chart" width="400" height="200"></canvas>
-        </div>
+      </div>
+    </section>
 
-        <div class="card">
-          <div class="card-header">
-            <h3>Hourly Activity</h3>
-          </div>
-          <canvas id="activity-chart" width="400" height="200"></canvas>
+    <!-- ==================== LOGS ==================== -->
+    <section x-show="currentPage === 'logs'" x-cloak>
+      <div class="page-header">
+        <h1>Logs</h1>
+        <div class="header-controls">
+          <select class="form-select" style="width:auto" @change="selectLogFile($event.target.value)">
+            <template x-for="f in logFiles" :key="f.name">
+              <option :value="f.name" :selected="f.name === currentLog.name" x-text="f.name"></option>
+            </template>
+          </select>
+          <button class="btn btn-primary" @click="fetchCurrentLog()">Refresh</button>
         </div>
+      </div>
+
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-header">
+          <h3 x-text="currentLog.name || 'No log loaded'"></h3>
+          <div style="display:flex;gap:4px">
+            <button class="btn btn-small" :class="logFilter === '' ? 'btn-primary' : ''" @click="logFilter = ''">All</button>
+            <button class="btn btn-small" :class="logFilter === 'INFO' ? 'btn-primary' : ''" @click="logFilter = 'INFO'">INFO+</button>
+            <button class="btn btn-small" :class="logFilter === 'WARNING' ? 'btn-primary' : ''" @click="logFilter = 'WARNING'">WARN+</button>
+            <button class="btn btn-small" :class="logFilter === 'ERROR' ? 'btn-primary' : ''" @click="logFilter = 'ERROR'">ERROR</button>
+          </div>
+        </div>
+        <pre style="max-height:600px;overflow-y:auto;padding:12px;margin:0;font-size:0.82em;line-height:1.5;background:#0d1117;color:#c9d1d9;white-space:pre-wrap;word-break:break-all"><template x-for="(line, idx) in filteredLogLines" :key="idx"><span x-text="line + '\n'"
+              :style="line.includes(' ERROR:') ? 'color:#f85149' : line.includes(' WARNING:') ? 'color:#d29922' : ''"></span></template></pre>
       </div>
     </section>
 

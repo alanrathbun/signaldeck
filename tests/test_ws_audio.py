@@ -34,3 +34,12 @@ def test_audio_websocket_subscribe(app):
         data = ws.receive_json()
         assert data["type"] == "subscribed"
         assert data["frequency_hz"] == 98.5e6
+
+
+def test_audio_websocket_subscribe_with_volume(app):
+    client = TestClient(app)
+    with client.websocket_connect("/ws/audio") as ws:
+        ws.send_json({"type": "subscribe", "frequency_hz": 162.4e6, "volume": 0.05})
+        data = ws.receive_json()
+        assert data["type"] == "subscribed"
+        assert data["frequency_hz"] == 162.4e6

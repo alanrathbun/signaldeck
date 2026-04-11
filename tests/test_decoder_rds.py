@@ -1,4 +1,5 @@
 import pytest
+import numpy as np
 from signaldeck.decoders.base import SignalInfo
 from signaldeck.decoders.rds import RdsDecoder, decode_rds_group, RDS_PTY_CODES
 
@@ -7,7 +8,7 @@ def test_rds_decoder_properties():
     decoder = RdsDecoder()
     assert decoder.name == "rds"
     assert "rds" in decoder.protocols
-    assert decoder.input_type == "audio"
+    assert decoder.input_type == "iq"
 
 
 def test_can_decode_broadcast_fm():
@@ -55,3 +56,18 @@ def test_decode_rds_group_2a():
     assert result["group_type"] == "2A"
     assert result["pty_name"] == "Rock"
     assert "rt_chars" in result
+
+
+@pytest.mark.asyncio
+async def test_decode_with_iq_yields_results_or_empty():
+    """decode() with IQ samples should not crash and should return an iterator."""
+    decoder = RdsDecoder()
+    signal = SignalInfo(
+        frequency_hz=98.5e6, bandwidth_hz=200e3, peak_power=-30.0,
+        modulation="FM", sample_rate=2_000_000, protocol_hint="broadcast_fm",
+    )
+    iq = np.zeros(100_000, dtype=np.complex64)
+    results = []
+    async for r in decoder.decode(signal, iq):
+        results.append(r)
+    assert isinstance(results, list)

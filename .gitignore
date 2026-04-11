@@ -1,4 +1,5 @@
 venv/
+.venv/
 *.egg-info/
 __pycache__/
 *.pyc
@@ -7,8 +8,9 @@ data/
 dist/
 build/
 
-# Credentials (generated at runtime, never commit)
+# Runtime config (generated at runtime, never commit)
 config/credentials.yaml
+config/user_settings.yaml
 
 # IDE
 .vscode/

@@ -1,6 +1,7 @@
 import asyncio
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 
 import aiosqlite
 
@@ -119,6 +120,9 @@ class Database:
             await self._conn.close()
             self._conn = None
 
+    async def commit(self) -> None:
+        await self._conn.commit()
+
     async def list_tables(self) -> list[str]:
         cursor = await self._conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
@@ -126,7 +130,7 @@ class Database:
         rows = await cursor.fetchall()
         return [row["name"] for row in rows]
 
-    async def upsert_signal(self, signal: Signal) -> int:
+    async def upsert_signal(self, signal: Signal, *, commit: bool = True) -> int:
         existing = await self.get_signal_by_frequency(signal.frequency, tolerance_hz=1000)
         if existing and existing.id is not None:
             await self._conn.execute(
@@ -147,7 +151,8 @@ class Database:
                     existing.id,
                 ),
             )
-            await self._conn.commit()
+            if commit:
+                await self._conn.commit()
             return existing.id
 
         cursor = await self._conn.execute(
@@ -168,7 +173,8 @@ class Database:
                 json.dumps(signal.classification_data),
             ),
         )
-        await self._conn.commit()
+        if commit:
+            await self._conn.commit()
         return cursor.lastrowid
 
     async def get_signal_by_id(self, signal_id: int) -> Signal | None:
@@ -236,7 +242,7 @@ class Database:
             for row in rows
         ]
 
-    async def insert_activity(self, entry: ActivityEntry) -> int:
+    async def insert_activity(self, entry: ActivityEntry, *, commit: bool = True) -> int:
         cursor = await self._conn.execute(
             """INSERT INTO activity_log
                (signal_id, timestamp, duration, strength, decoder_used,
@@ -254,7 +260,8 @@ class Database:
                 json.dumps(entry.raw_result),
             ),
         )
-        await self._conn.commit()
+        if commit:
+            await self._conn.commit()
         return cursor.lastrowid
 
     async def insert_bookmark(self, bookmark) -> int:
@@ -300,5 +307,146 @@ class Database:
                 audio_path=row["audio_path"],
                 raw_result=json.loads(row["raw_result"]),
             )
+            for row in rows
+        ]
+
+    async def get_recordings(self, limit: int = 200) -> list[dict]:
+        cursor = await self._conn.execute(
+            """SELECT *
+               FROM recordings
+               ORDER BY timestamp DESC
+               LIMIT ?""",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "id": row["id"],
+                "activity_id": row["activity_id"],
+                "signal_id": row["signal_id"],
+                "frequency": row["frequency"],
+                "frequency_hz": row["frequency"],
+                "frequency_mhz": round(row["frequency"] / 1e6, 4),
+                "timestamp": row["timestamp"],
+                "duration": row["duration"],
+                "format": row["format"],
+                "file_path": row["file_path"],
+                "file_size": row["file_size"],
+                "transcription": row["transcription"],
+            }
+            for row in rows
+        ]
+
+    async def clear_signals(self) -> None:
+        async with self._lock:
+            await self._conn.execute("DELETE FROM signals")
+            await self._conn.commit()
+
+    async def clear_activity(self) -> None:
+        async with self._lock:
+            await self._conn.execute("DELETE FROM activity_log")
+            await self._conn.commit()
+
+    async def clear_bookmarks(self) -> None:
+        async with self._lock:
+            await self._conn.execute("DELETE FROM bookmarks")
+            await self._conn.commit()
+
+    async def clear_recordings(self) -> None:
+        async with self._lock:
+            await self._conn.execute("DELETE FROM recordings")
+            await self._conn.commit()
+
+    async def clear_all(self) -> None:
+        async with self._lock:
+            for table in ("signals", "activity_log", "bookmarks", "recordings",
+                          "decoder_results", "learned_patterns"):
+                await self._conn.execute(f"DELETE FROM {table}")
+            await self._conn.commit()
+
+    async def get_stats(self) -> dict:
+        counts = {}
+        for name, table in [("signals", "signals"), ("activity", "activity_log"),
+                            ("bookmarks", "bookmarks"), ("recordings", "recordings")]:
+            cursor = await self._conn.execute(f"SELECT COUNT(*) FROM {table}")
+            row = await cursor.fetchone()
+            counts[name] = row[0]
+        counts["db_size"] = Path(self._db_path).stat().st_size
+        return counts
+
+    async def insert_decoder_result(
+        self, activity_id: int, decoder: str, protocol: str,
+        result_type: str, content: dict,
+    ) -> int:
+        cursor = await self._conn.execute(
+            """INSERT INTO decoder_results
+               (activity_id, decoder, protocol, result_type, content, timestamp)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (activity_id, decoder, protocol, result_type,
+             json.dumps(content),
+             datetime.now(timezone.utc).isoformat()),
+        )
+        await self._conn.commit()
+        return cursor.lastrowid
+
+    async def get_rds_for_frequency(
+        self, frequency_hz: float, tolerance_hz: float = 5000,
+    ) -> dict | None:
+        cursor = await self._conn.execute(
+            """SELECT dr.content FROM decoder_results dr
+               JOIN activity_log al ON dr.activity_id = al.id
+               JOIN signals s ON al.signal_id = s.id
+               WHERE ABS(s.frequency - ?) <= ?
+                 AND dr.decoder = 'rds'
+               ORDER BY dr.timestamp DESC LIMIT 1""",
+            (frequency_hz, tolerance_hz),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return json.loads(row["content"])
+
+    async def get_decoder_results(
+        self,
+        *,
+        signal_id: int | None = None,
+        decoder: str | None = None,
+        protocol: str | None = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        where = []
+        params: list[object] = []
+        if signal_id is not None:
+            where.append("al.signal_id = ?")
+            params.append(signal_id)
+        if decoder is not None:
+            where.append("dr.decoder = ?")
+            params.append(decoder)
+        if protocol is not None:
+            where.append("dr.protocol = ?")
+            params.append(protocol)
+        where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+        params.append(limit)
+        cursor = await self._conn.execute(
+            f"""SELECT dr.*, al.signal_id
+                FROM decoder_results dr
+                JOIN activity_log al ON dr.activity_id = al.id
+                {where_sql}
+                ORDER BY dr.timestamp DESC
+                LIMIT ?""",
+            params,
+        )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "id": row["id"],
+                "activity_id": row["activity_id"],
+                "signal_id": row["signal_id"],
+                "decoder": row["decoder"],
+                "protocol": row["protocol"],
+                "result_type": row["result_type"],
+                "timestamp": row["timestamp"],
+                "content": json.loads(row["content"]),
+            }
             for row in rows
         ]

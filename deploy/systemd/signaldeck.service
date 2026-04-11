@@ -1,0 +1,27 @@
+[Unit]
+Description=SignalDeck SDR scanner and dashboard
+Documentation=https://github.com/alanrathbun/signaldeck
+# Don't start until the user session has network; gqrx auto-start needs the
+# graphical session, but headless boxes still work because the scanner fails
+# gracefully to SDR-only mode.
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/signaldeck
+ExecStart=%h/signaldeck/.venv/bin/signaldeck start --host 0.0.0.0 --port 9090
+# SignalDeck handles SIGTERM cleanly via uvicorn / asyncio shutdown hooks.
+KillSignal=SIGTERM
+TimeoutStopSec=15
+Restart=on-failure
+RestartSec=3
+# Keep the process visible in `journalctl --user -u signaldeck` instead of
+# duplicating the logs SignalDeck already writes to data/logs.
+StandardOutput=journal
+StandardError=journal
+# Prevent runaway child processes (gqrx, rtl_* helpers) from outliving
+# SignalDeck when it's stopped or restarted.
+KillMode=control-group
+
+[Install]
+WantedBy=default.target

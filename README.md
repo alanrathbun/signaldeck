@@ -7,10 +7,12 @@ Built for the HackRF One and RTL-SDR, with support for multiple simultaneous SDR
 ## Features
 
 - **Automatic frequency scanning** with FFT-based signal detection and configurable sweep ranges
+- **gqrx integration** -- click any discovered signal to tune gqrx and listen, while scanning continues uninterrupted
 - **11 protocol decoders** covering analog voice, digital voice, data, aircraft tracking, and more
 - **AI-powered signal analysis** with CNN modulation classification, audio content detection, and anomaly flagging
 - **Web dashboard** accessible from any browser (desktop and mobile) with live waterfall display, signal map, and audio streaming
 - **Smart scanning** that learns which frequencies are active at what times and prioritizes accordingly
+- **Persistent settings** -- scan ranges, gain, squelch, and signal filters saved automatically across restarts
 - **Remote access** via Tailscale VPN or Nginx reverse proxy with HTTPS
 - **Audio recording** with in-browser playback and file management
 
@@ -34,11 +36,20 @@ Built for the HackRF One and RTL-SDR, with support for multiple simultaneous SDR
 
 ## Hardware
 
-**Required:**
-- HackRF One (or any SoapySDR-compatible SDR)
+SignalDeck supports three operating modes:
+
+| Mode | What You Need | Scanning | Listening |
+|------|--------------|----------|-----------|
+| **SDR + gqrx** (recommended) | SoapySDR device + gqrx | Automatic FFT sweep | Click signal to tune gqrx |
+| **SDR only** | SoapySDR device | Automatic FFT sweep | Audio streamed via web dashboard |
+| **gqrx only** | gqrx | None (manual tuning) | Tune via dashboard, audio through gqrx |
+
+**SDR devices:**
+- HackRF One, RTL-SDR Blog V4/V5, or any SoapySDR-compatible SDR
 
 **Recommended additions:**
-- RTL-SDR Blog V4/V5 for dedicated monitoring (e.g., park on ADS-B 1090 MHz while HackRF sweeps)
+- [gqrx](https://gqrx.dk/) for audio playback -- SignalDeck auto-detects gqrx and uses it as a tuner/player
+- Multiple SDR devices for dedicated monitoring (e.g., RTL-SDR on ADS-B 1090 MHz while HackRF sweeps)
 - Appropriate antennas for your frequency ranges of interest
 
 ## Quick Start
@@ -120,13 +131,19 @@ signaldeck bookmark add 162.400M --label "NOAA Weather" --decoder weather --prio
 
 The dashboard provides seven pages accessible from any browser:
 
-- **Live View** -- Real-time waterfall spectrogram, active signal list, audio streaming, scanner controls
+- **Live View** -- Real-time waterfall spectrogram, active signal list with sortable/filterable columns, click-to-listen (tunes gqrx), scanner controls
 - **Signals** -- Sortable table of all discovered signals with frequency, modulation, protocol, hit count
 - **Activity** -- Searchable activity log with timestamps and decoded summaries
 - **Recordings** -- Audio file browser with in-browser playback
 - **Bookmarks** -- Manage monitored frequencies with priority levels
 - **Map** -- Live aircraft (ADS-B) and APRS station positions on OpenStreetMap
-- **Settings** -- Device info, scan configuration, system status
+- **Settings** -- Device info, scan configuration, signal strength filters, persistent settings
+
+The Active Signals table on the Live View is the primary interface. It supports:
+- **Column show/hide** -- toggle Frequency, Bandwidth, Power, Modulation, Protocol, Hits, Last Seen, Summary
+- **Sorting** -- click any column header to sort ascending/descending
+- **Filtering** -- by modulation, protocol, minimum power (dBFS), or frequency range (e.g., `88-108`)
+- Column preferences persist in the browser across sessions
 
 The dashboard is responsive and works on mobile devices for remote monitoring.
 
@@ -147,15 +164,15 @@ The dashboard is responsive and works on mobile devices for remote monitoring.
               │                    │                     │
     ┌─────────┴──────────┐ ┌──────┴───────┐ ┌──────────┴─────────┐
     │   Scanner Engine   │ │   Decoder    │ │   AI Analyzer      │
-    │ Device Mgr, FFT,   │ │   Registry   │ │ CNN, Audio Class., │
+    │ SoapySDR, FFT,     │ │   Registry   │ │ CNN, Audio Class., │
     │ Sweep, Bookmarks   │ │ 11 Protocols │ │ Anomaly, LLM      │
     └─────────┬──────────┘ └──────────────┘ └────────────────────┘
               │
-    ┌─────────┴──────────┐
-    │  Learning Engine   │
-    │ Patterns, Priority │
-    │ Smart Scheduling   │
-    └─────────┬──────────┘
+    ┌─────────┴──────────┐     ┌──────────────────────┐
+    │  Learning Engine   │     │   gqrx Integration   │
+    │ Patterns, Priority │     │ TCP rigctl (port 7356)│
+    │ Smart Scheduling   │     │ Tune on user request  │
+    └─────────┬──────────┘     └──────────────────────┘
               │
     ┌─────────┴──────────┐
     │   SQLite Storage   │
@@ -166,7 +183,8 @@ The dashboard is responsive and works on mobile devices for remote monitoring.
 
 ### Key Components
 
-- **Scanner Engine** -- SoapySDR device abstraction, FFT power sweep, multi-device allocation, bookmark monitoring
+- **Scanner Engine** -- SoapySDR device abstraction, FFT power sweep, multi-device allocation, bookmark monitoring. Always runs on SoapySDR hardware.
+- **gqrx Integration** -- Optional. Auto-detected on localhost:7356 via rigctl TCP protocol. When the user clicks a signal, gqrx tunes to it and plays audio through its own speakers. Scanning continues uninterrupted.
 - **Signal Classifier** -- Rule-based frequency/bandwidth classification augmented by CNN modulation detection
 - **Decoder Registry** -- Plugin system where each decoder implements `can_decode()` (confidence routing) and `decode()` (async generator)
 - **Process Supervisor** -- Manages subprocess-based decoders (rtl_433, multimon-ng, dump1090, etc.) with lifecycle management and output parsing
@@ -196,6 +214,27 @@ auth:
 
 ```bash
 signaldeck start --config my_config.yaml
+```
+
+Settings changed via the web dashboard are automatically saved to `config/user_settings.yaml` and persist across restarts.
+
+### gqrx Integration
+
+If you have [gqrx](https://gqrx.dk/) installed, SignalDeck can use it as a tuner and audio player:
+
+1. Start gqrx and enable remote control: **Tools > Remote Control** (or **Remote control via TCP**, default port 7356)
+2. Start SignalDeck normally -- it auto-detects gqrx on `localhost:7356`
+3. Click any signal in the Active Signals table to tune gqrx to that frequency
+4. Audio plays through gqrx's speakers while SignalDeck continues scanning
+
+gqrx auto-detection can be disabled or additional remote instances configured:
+
+```yaml
+devices:
+  gqrx_auto_detect: false  # disable auto-detection
+  gqrx_instances:           # connect to remote gqrx instances
+    - host: "192.168.1.50"
+      port: 7356
 ```
 
 ### Authentication
@@ -295,9 +334,14 @@ New/unclassified signals get a temporary novelty bonus for extra attention.
 ```
 signaldeck/
 ├── signaldeck/
-│   ├── main.py                # CLI entry point
-│   ├── config.py              # YAML config loading
-│   ├── engine/                # Scanner, device manager, audio pipeline
+│   ├── main.py                # CLI entry point, dual-device orchestration
+│   ├── config.py              # Layered YAML config loading
+│   ├── engine/
+│   │   ├── device_manager.py  # SoapySDR device abstraction, gqrx discovery
+│   │   ├── gqrx_client.py    # Async TCP client for rigctl protocol
+│   │   ├── gqrx_device.py    # gqrx device adapter (tune, signal strength)
+│   │   ├── scanner.py         # FFT sweep, strength sweep, bookmark scan
+│   │   └── audio_pipeline.py  # FM/AM demodulation, recording
 │   ├── decoders/              # 11 decoder plugins + registry + supervisor
 │   ├── ai/                    # CNN, audio classifier, anomaly, LLM, training
 │   ├── learning/              # Pattern tracker, priority scorer
@@ -310,7 +354,7 @@ signaldeck/
 │   ├── install_decoders.sh    # Build P25/DMR/ACARS/APT decoders
 │   ├── setup_nginx.sh         # Nginx reverse proxy
 │   └── setup_tailscale.sh     # Tailscale VPN
-├── tests/                     # 218 tests (214 unit + 4 hardware integration)
+├── tests/                     # 241 tests (237 unit + 4 hardware integration)
 ├── pyproject.toml
 ├── LICENSE                    # GPL v3
 └── README.md
@@ -356,6 +400,7 @@ SignalDeck builds on these excellent open-source projects:
 
 - [GNU Radio](https://www.gnuradio.org/) -- Signal processing framework
 - [SoapySDR](https://github.com/pothosware/SoapySDR) -- Hardware abstraction
+- [gqrx](https://gqrx.dk/) -- SDR receiver used as tuner/player via remote control
 - [rtl_433](https://github.com/merbanan/rtl_433) -- ISM band decoder
 - [multimon-ng](https://github.com/EliasOeworking/multimon-ng) -- POCSAG/APRS decoder
 - [dump1090](https://github.com/mutability/dump1090) -- ADS-B decoder

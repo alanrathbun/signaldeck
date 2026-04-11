@@ -7,7 +7,7 @@ router = APIRouter()
 _audio_clients: dict[WebSocket, float | None] = {}
 
 # Shared state for audio streaming from scanner
-_audio_request: dict = {"frequency_hz": None, "active": False}
+_audio_request: dict = {"frequency_hz": None, "active": False, "modulation": None, "volume": None}
 
 
 def get_audio_request() -> dict:
@@ -31,7 +31,7 @@ async def ws_audio(websocket: WebSocket):
     global _audio_clients
     await websocket.accept()
     _audio_clients[websocket] = None
-    logger.info("Audio WebSocket client connected")
+    logger.debug("Audio WebSocket client connected")
 
     try:
         while True:
@@ -40,10 +40,15 @@ async def ws_audio(websocket: WebSocket):
                 await websocket.send_json({"type": "pong"})
             elif data.get("type") == "subscribe":
                 freq = data.get("frequency_hz", 0)
+                modulation = data.get("modulation")
+                volume = data.get("volume")
                 _audio_clients[websocket] = freq
                 _audio_request["frequency_hz"] = freq
                 _audio_request["active"] = True
-                logger.info("Audio subscribe: %.3f MHz", freq / 1e6)
+                _audio_request["modulation"] = modulation
+                if volume is not None:
+                    _audio_request["volume"] = volume
+                logger.debug("Audio subscribe: %.3f MHz (mod=%s)", freq / 1e6, modulation)
                 await websocket.send_json({"type": "subscribed", "frequency_hz": freq})
             elif data.get("type") == "unsubscribe":
                 _audio_clients[websocket] = None
@@ -51,7 +56,11 @@ async def ws_audio(websocket: WebSocket):
                 if not any(f is not None for f in _audio_clients.values()):
                     _audio_request["frequency_hz"] = None
                     _audio_request["active"] = False
+                    _audio_request["modulation"] = None
                 await websocket.send_json({"type": "unsubscribed"})
+            elif data.get("type") == "volume":
+                _audio_request["volume"] = data.get("level")
+                logger.debug("Audio volume: %s", data.get("level"))
     except WebSocketDisconnect:
         pass
     finally:
@@ -59,4 +68,5 @@ async def ws_audio(websocket: WebSocket):
         if not any(f is not None for f in _audio_clients.values()):
             _audio_request["frequency_hz"] = None
             _audio_request["active"] = False
-        logger.info("Audio WebSocket client disconnected")
+            _audio_request["modulation"] = None
+        logger.debug("Audio WebSocket client disconnected")

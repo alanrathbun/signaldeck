@@ -36,6 +36,8 @@ async def test_list_signals_with_data(client):
     data = resp.json()
     assert len(data) == 1
     assert data[0]["frequency_mhz"] == 98.5
+    assert "signal_class" in data[0]
+    assert "content_confidence" in data[0]
 
 async def test_get_activity_empty(client):
     resp = await client.get("/api/activity")
@@ -64,3 +66,88 @@ async def test_get_activity_with_limit(client):
             decoder_used=None, result_type="unknown", summary=f"Entry {i}"))
     resp = await client.get("/api/activity?limit=5")
     assert len(resp.json()) == 5
+
+async def test_enrichment_endpoint(client):
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    sig_id = await db.upsert_signal(Signal(frequency=162_550_000.0, bandwidth=12500.0, modulation="FM",
+        protocol="NOAA", first_seen=now, last_seen=now, hit_count=5, avg_strength=-45.0, confidence=0.8))
+    await db.insert_activity(ActivityEntry(signal_id=sig_id, timestamp=now, duration=2.0, strength=-45.0,
+        decoder_used="noaa", result_type="weather", summary="NOAA weather broadcast"))
+    resp = await client.get("/api/signals/enrichment")
+    assert resp.status_code == 200
+    data = resp.json()
+    # Keyed by frequency in Hz as string
+    key = "162550000"
+    assert key in data
+    assert data[key]["first_seen"] is not None
+    assert data[key]["hit_count"] == 5
+    assert data[key]["confidence"] == 0.8
+    assert "signal_class" in data[key]
+    assert "content_confidence" in data[key]
+    assert data[key]["last_activity"]["decoder"] == "noaa"
+    assert data[key]["last_activity"]["type"] == "weather"
+
+
+async def test_signal_decoder_results_endpoint(client):
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    sig_id = await db.upsert_signal(Signal(frequency=433_920_000.0, bandwidth=25000.0, modulation="OOK",
+        protocol="ism", first_seen=now, last_seen=now, hit_count=1, avg_strength=-40.0, confidence=0.7))
+    activity_id = await db.insert_activity(ActivityEntry(signal_id=sig_id, timestamp=now, duration=0.35, strength=-40.0,
+        decoder_used="ism_triage", result_type="burst", summary="433.920 MHz ISM burst"))
+    await db.insert_decoder_result(activity_id, decoder="ism_triage", protocol="ism", result_type="burst",
+        content={"signature": "sparse_pulse_train"})
+
+    resp = await client.get(f"/api/signals/{sig_id}/decoder-results")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["decoder"] == "ism_triage"
+    assert data[0]["content"]["signature"] == "sparse_pulse_train"
+
+
+async def test_ism_activity_endpoint(client):
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    sig_id = await db.upsert_signal(Signal(frequency=433_920_000.0, bandwidth=25000.0, modulation="OOK",
+        protocol="ism", first_seen=now, last_seen=now, hit_count=1, avg_strength=-40.0, confidence=0.7))
+    activity_id = await db.insert_activity(ActivityEntry(signal_id=sig_id, timestamp=now, duration=0.35, strength=-40.0,
+        decoder_used="rtl_433", result_type="data", summary="rtl_433 sensor"))
+    await db.insert_decoder_result(activity_id, decoder="rtl_433", protocol="rtl433", result_type="data",
+        content={"model": "Acurite-Tower"})
+
+    resp = await client.get("/api/ism/activity")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["decoder"] == "rtl_433"
+
+
+async def test_list_recordings_endpoint(client):
+    db = get_db()
+    await db._conn.execute(
+        """INSERT INTO recordings
+           (activity_id, signal_id, frequency, timestamp, duration, format, file_path, file_size, transcription)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            None,
+            None,
+            162_550_000.0,
+            datetime.now(timezone.utc).isoformat(),
+            12.5,
+            "wav",
+            "data/recordings/test.wav",
+            12345,
+            "test transcript",
+        ),
+    )
+    await db._conn.commit()
+
+    resp = await client.get("/api/recordings")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["frequency_mhz"] == 162.55
+    assert data[0]["file_path"] == "data/recordings/test.wav"
+    assert data[0]["transcription"] == "test transcript"

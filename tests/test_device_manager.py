@@ -5,6 +5,84 @@ import pytest
 from signaldeck.engine.device_manager import DeviceManager, SDRDevice, DeviceInfo
 
 
+@pytest.mark.asyncio
+async def test_enumerate_detects_gqrx(tmp_path):
+    """DeviceManager finds gqrx when it responds on the configured port."""
+    import asyncio
+
+    async def handle_client(reader, writer):
+        data = await reader.readline()
+        cmd = data.decode().strip()
+        if cmd == "f":
+            writer.write(b"162400000\n")
+        else:
+            writer.write(b"RPRT 1\n")
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(handle_client, "127.0.0.1", 17370)
+    try:
+        mgr = DeviceManager()
+        devices = await mgr.enumerate_async(
+            gqrx_auto_detect=True,
+            gqrx_host="127.0.0.1",
+            gqrx_port=17370,
+            gqrx_instances=[],
+        )
+        gqrx_devs = [d for d in devices if d.driver == "gqrx"]
+        assert len(gqrx_devs) == 1
+        assert gqrx_devs[0].serial == "127.0.0.1:17370"
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_enumerate_no_gqrx_when_unavailable():
+    """DeviceManager skips gqrx gracefully when it's not running."""
+    mgr = DeviceManager()
+    devices = await mgr.enumerate_async(
+        gqrx_auto_detect=True,
+        gqrx_host="127.0.0.1",
+        gqrx_port=19998,
+        gqrx_instances=[],
+    )
+    gqrx_devs = [d for d in devices if d.driver == "gqrx"]
+    assert len(gqrx_devs) == 0
+
+
+@pytest.mark.asyncio
+async def test_open_gqrx_device(tmp_path):
+    """DeviceManager.open_gqrx returns a GqrxDevice."""
+    import asyncio
+
+    async def handle_client(reader, writer):
+        while True:
+            data = await reader.readline()
+            if not data:
+                break
+            cmd = data.decode().strip()
+            if cmd == "f":
+                writer.write(b"162400000\n")
+            elif cmd == "q":
+                writer.close()
+                break
+            else:
+                writer.write(b"RPRT 0\n")
+            await writer.drain()
+
+    server = await asyncio.start_server(handle_client, "127.0.0.1", 17371)
+    try:
+        mgr = DeviceManager()
+        device = await mgr.open_gqrx(host="127.0.0.1", port=17371)
+        assert device.is_gqrx
+        assert device.info.driver == "gqrx"
+        await device.close()
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
 def _make_mock_soapy_device():
     """Create a mock SoapySDR device."""
     dev = MagicMock()

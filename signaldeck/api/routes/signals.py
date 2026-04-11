@@ -1,7 +1,63 @@
+from pathlib import Path
+
 from fastapi import APIRouter, Query
-from signaldeck.api.server import get_db
+
+from signaldeck.api.server import get_config, get_db
 
 router = APIRouter()
+
+@router.get("/signals/rds/{frequency_hz}")
+async def get_rds_data(frequency_hz: int):
+    """Return accumulated RDS metadata for a specific frequency."""
+    db = get_db()
+    rds = await db.get_rds_for_frequency(float(frequency_hz))
+    return {"frequency_hz": frequency_hz, "rds": rds}
+
+@router.get("/signals/enrichment")
+async def signal_enrichment():
+    """Return database signal data keyed by frequency (Hz) for frontend enrichment."""
+    db = get_db()
+    signals = await db.get_all_signals()
+    activity = await db.get_recent_activity(limit=500)
+
+    # Build activity lookup: signal_id -> most recent activity entry
+    activity_by_signal: dict[int, dict] = {}
+    for e in activity:
+        if e.signal_id not in activity_by_signal:
+            activity_by_signal[e.signal_id] = {
+                "decoder": e.decoder_used,
+                "type": e.result_type,
+                "summary": e.summary,
+                "timestamp": e.timestamp.isoformat(),
+            }
+
+    result = {}
+    for s in signals:
+        freq_key = str(int(s.frequency))
+        entry = {
+            "first_seen": s.first_seen.isoformat(),
+            "last_seen": s.last_seen.isoformat(),
+            "hit_count": s.hit_count,
+            "confidence": s.confidence,
+            "signal_class": s.classification_data.get("signal_class"),
+            "content_confidence": s.classification_data.get("content_confidence"),
+            "signal_features": s.classification_data.get("signal_features"),
+        }
+        if s.id and s.id in activity_by_signal:
+            entry["last_activity"] = activity_by_signal[s.id]
+        else:
+            entry["last_activity"] = None
+        result[freq_key] = entry
+
+    # Enrich with RDS data for FM signals
+    for s in signals:
+        freq_key = str(int(s.frequency))
+        if freq_key in result and s.protocol == "broadcast_fm":
+            rds = await db.get_rds_for_frequency(s.frequency)
+            if rds:
+                result[freq_key]["rds"] = rds
+
+    return result
 
 @router.get("/signals")
 async def list_signals(limit: int = Query(default=200, ge=1, le=5000),
@@ -35,9 +91,31 @@ async def list_signals(limit: int = Query(default=200, ge=1, le=5000),
             "power": s.avg_strength,
             "avg_strength": s.avg_strength,
             "confidence": s.confidence,
+            "signal_class": s.classification_data.get("signal_class"),
+            "content_confidence": s.classification_data.get("content_confidence"),
+            "signal_features": s.classification_data.get("signal_features"),
         }
         for s in signals
     ]
+
+
+@router.get("/signals/{signal_id}/decoder-results")
+async def list_signal_decoder_results(signal_id: int, limit: int = Query(default=50, ge=1, le=500)):
+    db = get_db()
+    return await db.get_decoder_results(signal_id=signal_id, limit=limit)
+
+
+@router.get("/ism/activity")
+async def list_ism_activity(limit: int = Query(default=50, ge=1, le=500)):
+    db = get_db()
+    triage = await db.get_decoder_results(decoder="ism_triage", limit=limit)
+    decoded = await db.get_decoder_results(decoder="rtl_433", limit=limit)
+    combined = sorted(
+        [*triage, *decoded],
+        key=lambda item: item["timestamp"],
+        reverse=True,
+    )
+    return combined[:limit]
 
 @router.get("/activity")
 async def list_activity(limit: int = Query(default=50, ge=1, le=1000)):
@@ -62,3 +140,50 @@ async def list_activity(limit: int = Query(default=50, ge=1, le=1000)):
             "audio_path": e.audio_path,
         })
     return results
+
+
+@router.delete("/data/signals")
+async def clear_signals():
+    db = get_db()
+    await db.clear_signals()
+    return {"status": "cleared", "table": "signals"}
+
+
+@router.delete("/data/activity")
+async def clear_activity():
+    db = get_db()
+    await db.clear_activity()
+    return {"status": "cleared", "table": "activity_log"}
+
+
+@router.delete("/data/bookmarks")
+async def clear_bookmarks():
+    db = get_db()
+    await db.clear_bookmarks()
+    return {"status": "cleared", "table": "bookmarks"}
+
+
+@router.delete("/data/recordings")
+async def clear_recordings():
+    db = get_db()
+    await db.clear_recordings()
+    config = get_config()
+    rec_dir = Path(config.get("audio", {}).get("recording_dir", "data/recordings"))
+    deleted_files = 0
+    if rec_dir.exists():
+        for f in rec_dir.glob("*.wav"):
+            f.unlink()
+            deleted_files += 1
+    return {"status": "cleared", "table": "recordings", "files_deleted": deleted_files}
+
+
+@router.delete("/data/all")
+async def clear_all_data():
+    db = get_db()
+    await db.clear_all()
+    config = get_config()
+    rec_dir = Path(config.get("audio", {}).get("recording_dir", "data/recordings"))
+    if rec_dir.exists():
+        for f in rec_dir.glob("*.wav"):
+            f.unlink()
+    return {"status": "cleared", "table": "all"}

@@ -10,18 +10,23 @@ _waterfall_clients: set[WebSocket] = set()
 
 
 def fft_broadcast(center_freq_hz, sample_rate, power_db):
+    num_bins = len(power_db)
+    half_bw = sample_rate / 2
     return {
         "type": "fft",
         "center_freq_hz": center_freq_hz,
         "center_freq_mhz": round(center_freq_hz / 1e6, 4),
         "sample_rate": sample_rate,
-        "power_db": [round(float(v), 1) for v in power_db],
+        "data": [round(float(v), 1) for v in power_db],
+        "freq_start": center_freq_hz - half_bw,
+        "freq_end": center_freq_hz + half_bw,
     }
 
 
 async def broadcast_fft(message: dict):
+    global _waterfall_clients
     disconnected = set()
-    for ws in _waterfall_clients:
+    for ws in list(_waterfall_clients):
         try:
             await ws.send_json(message)
         except Exception:

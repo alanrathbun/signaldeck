@@ -3,30 +3,29 @@
 devices:
   auto_discover: true
   gain: 40  # dB, overridden per device if needed
+  scanner_device: null      # serial or driver of SDR to use for scanning (null = first available)
+  gqrx_auto_detect: true   # try connecting to gqrx on localhost:7356
+  gqrx_auto_start: true    # launch local gqrx if localhost:7356 is not available
+  gqrx_command: []         # optional explicit command, e.g. ["gqrx", "-e"]
+  gqrx_config_path: "~/.config/gqrx/default.conf"
+  gqrx_startup_timeout_s: 12
+  gqrx_instances: []        # additional gqrx instances: [{host: "192.168.1.50", port: 7356}]
 
 scanner:
-  squelch_offset: 10  # dB above noise floor
+  auto_start: false   # set true to begin scanning on startup; otherwise wait for UI start
+  squelch_offset: 20  # dB above noise floor (raise to reduce false hits)
+  min_signal_strength: -30  # dBFS, ignore signals weaker than this
   dwell_time_ms: 50   # time per frequency step
   fft_size: 1024
-  sweep_ranges:
-    - label: "VHF Low"
-      start_mhz: 25
-      end_mhz: 54
-    - label: "VHF High"
-      start_mhz: 134
-      end_mhz: 174
-    - label: "UHF"
-      start_mhz: 400
-      end_mhz: 512
-    - label: "Airband"
-      start_mhz: 118
-      end_mhz: 137
-    - label: "ISM 433"
-      start_mhz: 430
-      end_mhz: 440
-    - label: "Broadcast FM"
-      start_mhz: 88
-      end_mhz: 108
+  ism_burst_enabled: true
+  ism_burst_sample_rate: 250000
+  ism_burst_duration_ms: 350
+  ism_burst_cooldown_s: 20
+  ism_max_bursts_per_sweep: 3
+  rtl_safe_defaults: true
+  scan_profiles:
+    - rtl_priority_search
+  sweep_ranges: []
 
 audio:
   sample_rate: 48000
@@ -38,6 +37,7 @@ storage:
 
 logging:
   level: "INFO"
+  log_dir: "data/logs"
 
 auth:
   enabled: false  # set to true to require login

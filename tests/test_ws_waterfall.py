@@ -34,4 +34,6 @@ def test_fft_broadcast_message():
     msg = fft_broadcast(center_freq_hz=100e6, sample_rate=2e6, power_db=power_db)
     assert msg["type"] == "fft"
     assert msg["center_freq_mhz"] == 100.0
-    assert len(msg["power_db"]) == 1024
+    assert len(msg["data"]) == 1024
+    assert msg["freq_start"] == 100e6 - 1e6
+    assert msg["freq_end"] == 100e6 + 1e6

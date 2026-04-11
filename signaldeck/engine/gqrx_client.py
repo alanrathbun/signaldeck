@@ -1,0 +1,186 @@
+import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class GqrxConnectionError(Exception):
+    """Raised when connection to gqrx fails or is lost."""
+
+
+class GqrxClient:
+    """Async TCP client for gqrx's rigctl remote control protocol."""
+
+    def __init__(self, host: str = "localhost", port: int = 7356, timeout: float = 2.0) -> None:
+        self.host = host
+        self.port = port
+        self.timeout = timeout
+        self._reader: asyncio.StreamReader | None = None
+        self._writer: asyncio.StreamWriter | None = None
+        self._lock = asyncio.Lock()
+
+    @property
+    def is_connected(self) -> bool:
+        return self._writer is not None and not self._writer.is_closing()
+
+    async def connect(self) -> None:
+        if self.is_connected:
+            return
+        try:
+            self._reader, self._writer = await asyncio.wait_for(
+                asyncio.open_connection(self.host, self.port),
+                timeout=self.timeout,
+            )
+            logger.info("Connected to gqrx at %s:%d", self.host, self.port)
+        except (OSError, asyncio.TimeoutError) as e:
+            raise GqrxConnectionError(f"Cannot connect to gqrx at {self.host}:{self.port}: {e}") from e
+
+    async def ensure_connected(self) -> None:
+        if not self.is_connected:
+            await self.connect()
+
+    async def _reset_connection(self) -> None:
+        writer = self._writer
+        self._writer = None
+        self._reader = None
+        if writer is not None:
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+    async def disconnect(self) -> None:
+        if self._writer is not None:
+            try:
+                self._writer.write(b"q\n")
+                await self._writer.drain()
+            except Exception:
+                pass
+            self._writer.close()
+            try:
+                await self._writer.wait_closed()
+            except Exception:
+                pass
+            self._writer = None
+            self._reader = None
+            logger.info("Disconnected from gqrx")
+
+    async def _send_command(self, cmd: str) -> str:
+        async with self._lock:
+            last_error = None
+            for attempt in range(2):
+                try:
+                    await self.ensure_connected()
+                    logger.debug("gqrx >> %s", cmd)
+                    self._writer.write(f"{cmd}\n".encode())
+                    await self._writer.drain()
+                    line = await asyncio.wait_for(
+                        self._reader.readline(),
+                        timeout=self.timeout,
+                    )
+                    if not line:
+                        raise GqrxConnectionError("gqrx closed the connection")
+                    resp = line.decode().strip()
+                    logger.debug("gqrx << %s", resp)
+                    return resp
+                except (OSError, asyncio.TimeoutError, GqrxConnectionError) as e:
+                    last_error = e
+                    await self._reset_connection()
+                    if attempt == 0:
+                        logger.warning("gqrx command failed, retrying after reconnect: %s", e)
+                        continue
+                    raise GqrxConnectionError(f"Command '{cmd}' failed: {e}") from e
+            raise GqrxConnectionError(f"Command '{cmd}' failed: {last_error}")
+
+    async def get_frequency(self) -> int:
+        resp = await self._send_command("f")
+        return int(resp)
+
+    async def set_frequency(self, freq_hz: int) -> None:
+        resp = await self._send_command(f"F {freq_hz}")
+        if resp != "RPRT 0":
+            raise GqrxConnectionError(f"set_frequency failed: {resp}")
+
+    async def get_signal_strength(self) -> float:
+        resp = await self._send_command("l STRENGTH")
+        return float(resp)
+
+    async def set_mode(self, mode: str, passband: int = 0) -> None:
+        resp = await self._send_command(f"M {mode} {passband}")
+        if resp != "RPRT 0":
+            raise GqrxConnectionError(f"set_mode failed: {resp}")
+
+    async def get_mode(self) -> tuple[str, int]:
+        resp = await self._send_command("m")
+        passband_line = await asyncio.wait_for(
+            self._reader.readline(),
+            timeout=self.timeout,
+        )
+        return resp, int(passband_line.decode().strip())
+
+    async def set_squelch(self, level_dbfs: float) -> None:
+        resp = await self._send_command(f"L SQL {level_dbfs}")
+        if resp != "RPRT 0":
+            raise GqrxConnectionError(f"set_squelch failed: {resp}")
+
+    async def get_squelch(self) -> float:
+        resp = await self._send_command("l SQL")
+        return float(resp)
+
+    async def set_audio_gain(self, gain_db: float) -> None:
+        resp = await self._send_command(f"L AF {gain_db}")
+        if resp != "RPRT 0":
+            raise GqrxConnectionError(f"set_audio_gain failed: {resp}")
+
+    async def start_recording(self) -> None:
+        resp = await self._send_command("U RECORD 1")
+        if resp != "RPRT 0":
+            raise GqrxConnectionError(f"start_recording failed: {resp}")
+
+    async def stop_recording(self) -> None:
+        resp = await self._send_command("U RECORD 0")
+        if resp != "RPRT 0":
+            raise GqrxConnectionError(f"stop_recording failed: {resp}")
+
+    # --- RDS ---
+
+    async def set_rds(self, enabled: bool) -> None:
+        resp = await self._send_command(f"U RDS {1 if enabled else 0}")
+        if resp != "RPRT 0":
+            raise GqrxConnectionError(f"set_rds failed: {resp}")
+
+    async def get_rds_enabled(self) -> bool:
+        resp = await self._send_command("u RDS")
+        return resp.strip() == "1"
+
+    async def get_rds_pi(self) -> str:
+        resp = await self._send_command("p RDS_PI")
+        return resp.strip()
+
+    async def get_rds_ps_name(self) -> str:
+        resp = await self._send_command("p RDS_PS_NAME")
+        return resp.strip()
+
+    async def get_rds_radiotext(self) -> str:
+        resp = await self._send_command("p RDS_RADIOTEXT")
+        return resp.strip()
+
+    # --- DSP / Mute ---
+
+    async def get_dsp_status(self) -> bool:
+        resp = await self._send_command("u DSP")
+        return resp.strip() == "1"
+
+    async def set_dsp(self, enabled: bool) -> None:
+        resp = await self._send_command(f"U DSP {1 if enabled else 0}")
+        if resp != "RPRT 0":
+            raise GqrxConnectionError(f"set_dsp failed: {resp}")
+
+    async def get_audio_gain(self) -> float:
+        resp = await self._send_command("l AF")
+        return float(resp)
+
+    async def get_version(self) -> str:
+        resp = await self._send_command("_")
+        return resp.strip()
