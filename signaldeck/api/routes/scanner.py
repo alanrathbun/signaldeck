@@ -1,8 +1,9 @@
 import logging
 from pathlib import Path
+from typing import Literal
 
 import yaml
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from fastapi import Query
 from pydantic import BaseModel
 
@@ -160,7 +161,7 @@ class SettingsUpdate(BaseModel):
     scanner_device: str | None = None
     tuner_device: str | None = None
     # Audio mode
-    audio_mode: str | None = None
+    audio_mode: Literal["auto", "gqrx", "pcm_stream"] | None = None
 
 
 @router.put("/settings")
@@ -244,12 +245,7 @@ async def update_settings(data: SettingsUpdate):
             changed.append(f"tuner_device={data.tuner_device}")
 
     if data.audio_mode is not None:
-        if data.audio_mode not in ("auto", "gqrx", "pcm_stream"):
-            raise HTTPException(
-                status_code=400,
-                detail=f"invalid audio_mode: {data.audio_mode}",
-            )
-        config.setdefault("scanner", {})["audio_mode"] = data.audio_mode
+        config["scanner"]["audio_mode"] = data.audio_mode
         changed.append(f"audio_mode={data.audio_mode}")
 
     # Persist settings to user config file so they survive restarts

@@ -60,7 +60,10 @@ async def test_put_settings_rejects_invalid_audio_mode(tmp_path, monkeypatch):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as c:
             resp = await c.put("/api/settings", json={"audio_mode": "nonsense"})
-            assert resp.status_code == 400
+            assert resp.status_code == 422
+            # Pydantic's validation error body mentions the rejected value
+            body_text = resp.text
+            assert "nonsense" in body_text or "audio_mode" in body_text
 
 
 async def test_persist_user_config_writes_audio_mode(tmp_path, monkeypatch):
