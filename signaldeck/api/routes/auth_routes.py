@@ -50,6 +50,7 @@ async def login(data: LoginRequest, request: Request, response: Response):
     return {
         "username": data.username,
         "remember_token": raw_token,
+        "api_token": mgr.api_token,
     }
 
 
