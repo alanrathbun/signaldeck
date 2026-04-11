@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
-from signaldeck.api.server import get_auth_manager, get_db
+from signaldeck.api.server import get_auth_manager, get_config, get_db
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -31,7 +31,6 @@ async def login(data: LoginRequest, request: Request, response: Response):
     )
 
     # Determine cookie Max-Age from config.
-    from signaldeck.api.server import get_config
     cfg = get_config() or {}
     days = cfg.get("auth", {}).get("remember_token_days")
     if isinstance(days, int) and days > 0:
@@ -113,11 +112,14 @@ async def toggle_auth(data: ToggleAuthRequest):
     returns the generated admin password in first_run_password so the
     frontend can show it exactly once. Subsequent toggles do not return
     a password (the credentials already exist).
+
+    If AuthManager.initialize() fails, the config 'enabled' flag is NOT
+    flipped — this prevents a silent security bypass where the config
+    says auth is on but _state has no AuthManager.
     """
     from signaldeck.api.server import get_config, _state
     from pathlib import Path
     config = get_config()
-    config.setdefault("auth", {})["enabled"] = data.enabled
 
     first_run_password = None
     if data.enabled:
@@ -127,6 +129,7 @@ async def toggle_auth(data: ToggleAuthRequest):
 
         if "auth" not in _state:
             mgr = AuthManager(credentials_path=cred_path)
+            # Let exceptions bubble up as 500 — config.enabled stays as-is.
             mgr.initialize()
             _state["auth"] = mgr
         else:
@@ -134,8 +137,12 @@ async def toggle_auth(data: ToggleAuthRequest):
 
         if not cred_file_existed and mgr._initial_password is not None:
             first_run_password = mgr._initial_password
+
+        # Only mark config.enabled=True after initialize() succeeds.
+        config.setdefault("auth", {})["enabled"] = True
     else:
         _state.pop("auth", None)
+        config.setdefault("auth", {})["enabled"] = False
 
     response_body = {"enabled": data.enabled}
     if first_run_password is not None:

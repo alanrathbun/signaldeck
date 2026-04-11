@@ -136,10 +136,6 @@ class AuthManager:
         self._save()
         logger.info("Password changed for user: %s", username)
 
-    def create_session_token(self) -> str:
-        """Create a session token for web login."""
-        return secrets.token_urlsafe(32)
-
     # ---- Remember-me tokens (database-backed) ----
 
     @staticmethod

@@ -65,7 +65,7 @@ async def test_login_cookie_max_age_when_days_null_is_10_years(tmp_path):
             assert "Max-Age=315360000" in sd  # 10 years
             assert "HttpOnly" in sd
             assert "Path=/" in sd
-            assert "SameSite=Lax" in sd.lower() or "samesite=lax" in sd.lower()
+            assert "samesite=lax" in sd.lower()
 
 
 async def test_login_cookie_max_age_when_days_is_integer(tmp_path):
