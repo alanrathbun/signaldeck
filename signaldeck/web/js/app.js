@@ -193,6 +193,10 @@ function dashboard() {
       this.fetchStatus();
       this.statusPollTimer = setInterval(() => this.fetchStatus(), 3000);
 
+      // Load bookmarks up-front so the Live page can flag already-bookmarked
+      // signals without waiting for the user to visit the Bookmarks page.
+      this.fetchBookmarks();
+
       // Periodic enrichment sync for database fields
       this.fetchEnrichment();
       this._enrichmentTimer = setInterval(() => this.fetchEnrichment(), 10000);
@@ -1104,7 +1108,23 @@ function dashboard() {
       this.startAudio();
     },
 
+    // Fuzzy match a signal frequency against the bookmark list.
+    // Tolerance is ~2.5 kHz — tight enough to keep adjacent channels
+    // (12.5/25/100 kHz spacings) distinct, wide enough to absorb
+    // per-sweep center drift.
+    isBookmarked(freqHz) {
+      if (!freqHz || !this.bookmarks || !this.bookmarks.length) return false;
+      for (const bm of this.bookmarks) {
+        if (Math.abs((bm.frequency_hz || 0) - freqHz) < 2500) return true;
+      }
+      return false;
+    },
+
     async quickBookmark(sig) {
+      if (this.isBookmarked(sig.frequency)) {
+        this.showToast('Already bookmarked', 'info');
+        return;
+      }
       const label = (sig.protocol || sig.modulation || 'Signal') + ' ' + this.formatFreq(sig.frequency);
       await this.apiFetch('/api/bookmarks', {
         method: 'POST',

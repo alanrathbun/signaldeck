@@ -413,6 +413,11 @@ a:hover { text-decoration: underline; }
 }
 
 .btn:active { transform: scale(0.98); }
+.btn:disabled, .btn[disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.btn:disabled:hover, .btn[disabled]:hover { background: inherit; }
 
 .btn-primary {
   background: var(--blue-dim);
