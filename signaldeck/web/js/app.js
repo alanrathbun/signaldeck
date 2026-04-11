@@ -1306,7 +1306,16 @@ function dashboard() {
     },
 
     isGqrxBackend() {
-      return this.scannerStatus && (this.scannerStatus.backend === 'gqrx' || this.scannerStatus.backend === 'both');
+      // Return true when gqrx is the ACTIVE audio source (playing on server speakers).
+      // We read audioStatus.effective_mode, which comes from /api/status.audio and
+      // respects both the configured scanner.audio_mode setting and the current
+      // set of /ws/audio subscribers.
+      //
+      // Note: this used to read scannerStatus.backend, which returned true whenever
+      // gqrx was merely CONFIGURED — even when audio_mode is pcm_stream. That caused
+      // the frontend to skip PCM wiring (VU meter, volume, "Listening" badge) and
+      // show a misleading "audio plays through gqrx" toast. See spec doc 2026-04-10.
+      return this.audioStatus && this.audioStatus.effective_mode === 'gqrx';
     },
 
     startAudio() {

@@ -821,19 +821,36 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
         try:
             while True:
                 if scanner:
-                    # If no gqrx, SoapySDR can do audio (pauses scanning)
-                    if not gqrx_device and audio_request_fn:
+                    # Decide whether the scanner (SoapySDR) should take over audio.
+                    # This happens when:
+                    #   (a) gqrx is absent entirely — backwards compat, the scanner is the
+                    #       only audio path, OR
+                    #   (b) the operator has set audio_mode to pcm_stream (or effective
+                    #       resolves to pcm_stream via auto + remote subscriber) — the
+                    #       scanner's PCM output replaces gqrx's local audio. Task 12's
+                    #       AudioModeController keeps gqrx muted in parallel via rigctl.
+                    if audio_request_fn:
                         audio_req = audio_request_fn()
                         if audio_req.get("active") and audio_req.get("frequency_hz"):
-                            logger.info("Audio streaming: tuning to %.3f MHz",
-                                        audio_req["frequency_hz"] / 1e6)
-                            await _stream_audio(device, audio_req["frequency_hz"],
-                                                audio_stream_fn, audio_request_fn,
-                                                sample_rate=2_000_000,
-                                                fft_callback=on_fft,
-                                                rds_callback=on_rds)
-                            logger.info("Audio streaming ended, resuming scan")
-                            continue
+                            from signaldeck.api.websocket.audio_stream import resolve_effective_audio_mode
+                            configured_mode = cfg.get("scanner", {}).get("audio_mode", "auto")
+                            effective = resolve_effective_audio_mode(configured_mode)
+                            should_stream = (gqrx_device is None) or (effective == "pcm_stream")
+                            if should_stream:
+                                logger.info(
+                                    "Audio streaming: tuning to %.3f MHz (effective=%s)",
+                                    audio_req["frequency_hz"] / 1e6,
+                                    effective,
+                                )
+                                await _stream_audio(
+                                    device, audio_req["frequency_hz"],
+                                    audio_stream_fn, audio_request_fn,
+                                    sample_rate=2_000_000,
+                                    fft_callback=on_fft,
+                                    rds_callback=on_rds,
+                                )
+                                logger.info("Audio streaming ended, resuming scan")
+                                continue
 
                     # Only sweep when scanner is set to running (via UI or auto_start)
                     if _scanner_state["status"] != "running":
