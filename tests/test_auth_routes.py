@@ -1,8 +1,16 @@
 import pytest
 from httpx import AsyncClient, ASGITransport
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from signaldeck.api.server import create_app, get_db
 from signaldeck.api.auth import AuthManager
+
+
+class _RemoteIPMiddleware(BaseHTTPMiddleware):
+    """Force all requests to appear as a remote (non-LAN) IP for auth tests."""
+    async def dispatch(self, request, call_next):
+        request.scope["client"] = ("203.0.113.1", 0)
+        return await call_next(request)
 
 
 @pytest.fixture
@@ -43,7 +51,9 @@ async def test_health_always_accessible(app_with_auth):
 
 
 async def test_api_requires_token_when_auth_enabled(app_with_auth):
-    """API endpoints return 401 without auth token."""
+    """API endpoints return 401 without auth token (from a remote IP)."""
+    # Simulate a remote (non-LAN) client so the LAN bypass doesn't fire.
+    app_with_auth.add_middleware(_RemoteIPMiddleware)
     async with app_with_auth.router.lifespan_context(app_with_auth):
         transport = ASGITransport(app=app_with_auth)
         async with AsyncClient(transport=transport, base_url="http://test") as client:

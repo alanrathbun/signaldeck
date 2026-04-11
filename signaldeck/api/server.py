@@ -6,6 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 from signaldeck import __version__
+from signaldeck.api.auth import DEFAULT_LAN_ALLOWLIST, is_lan_client
 from signaldeck.storage.database import Database
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,13 @@ def get_auth_manager():
     return _state.get("auth")
 
 
+_PUBLIC_PATHS = {
+    "/api/health",
+    "/api/auth/login",
+    "/api/auth/toggle",
+}
+
+
 class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         auth_mgr = _state.get("auth")
@@ -29,25 +37,43 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         path = request.url.path
 
-        # Public paths
-        if path in ("/api/health",) or path.startswith("/api/auth/") or path.startswith("/ws/"):
-            return await call_next(request)
-
-        # Non-API paths (static files)
+        # Static files — the frontend has its own 401 handling via apiFetch.
         if not path.startswith("/api/"):
             return await call_next(request)
 
-        # Check bearer token
+        # WebSocket paths are handled inside their own handlers via
+        # _ws_authorized(). Middleware only sees HTTP here.
+        if path in _PUBLIC_PATHS:
+            return await call_next(request)
+
+        # Determine the caller's IP.
+        config = _state.get("config", {})
+        auth_cfg = config.get("auth", {}) if isinstance(config, dict) else {}
+        allowlist = auth_cfg.get("lan_allowlist") or DEFAULT_LAN_ALLOWLIST
+        client_ip = ""
+        if auth_cfg.get("trust_x_forwarded_for", False):
+            xff = request.headers.get("x-forwarded-for", "")
+            if xff:
+                client_ip = xff.split(",")[0].strip()
+        if not client_ip and request.client is not None:
+            client_ip = request.client.host
+
+        if is_lan_client(client_ip, allowlist):
+            return await call_next(request)
+
+        # Bearer token (scripts / curl / headless clients)
         auth_header = request.headers.get("authorization", "")
         if auth_header.startswith("Bearer "):
             token = auth_header[7:]
             if auth_mgr.verify_token(token):
                 return await call_next(request)
 
-        # Check session cookie
-        session = request.cookies.get("session_token")
-        if session and auth_mgr.verify_token(session):
-            return await call_next(request)
+        # Remember-me cookie (the normal browser path)
+        cookie = request.cookies.get("sd_remember")
+        if cookie:
+            db = _state.get("db")
+            if db is not None and await auth_mgr.verify_remember_token(db, cookie):
+                return await call_next(request)
 
         return JSONResponse({"detail": "Not authenticated"}, status_code=401)
 
