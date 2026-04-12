@@ -5,7 +5,7 @@ from pathlib import Path
 
 import aiosqlite
 
-from signaldeck.storage.models import Signal, ActivityEntry
+from signaldeck.storage.models import Signal, ActivityEntry, BookmarkGroup
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS signals (
@@ -100,6 +100,20 @@ CREATE TABLE IF NOT EXISTS remember_tokens (
 );
 
 CREATE INDEX IF NOT EXISTS idx_remember_tokens_hash ON remember_tokens(token_hash);
+
+CREATE TABLE IF NOT EXISTS bookmark_groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bookmark_group_members (
+    group_id INTEGER NOT NULL,
+    bookmark_id INTEGER NOT NULL,
+    PRIMARY KEY (group_id, bookmark_id),
+    FOREIGN KEY (group_id) REFERENCES bookmark_groups(id) ON DELETE CASCADE,
+    FOREIGN KEY (bookmark_id) REFERENCES bookmarks(id) ON DELETE CASCADE
+);
 """
 
 
@@ -124,6 +138,7 @@ class Database:
         # WAL mode allows concurrent reads while writing
         await self._conn.execute("PRAGMA journal_mode=WAL")
         await self._conn.execute("PRAGMA busy_timeout=5000")
+        await self._conn.execute("PRAGMA foreign_keys = ON")
         await self._conn.executescript(_SCHEMA)
         await self._conn.commit()
 
@@ -299,6 +314,110 @@ class Database:
         cursor = await self._conn.execute("DELETE FROM bookmarks WHERE id = ?", (bookmark_id,))
         await self._conn.commit()
         return cursor.rowcount > 0
+
+    # ---- Bookmark groups ----
+
+    async def create_bookmark_group(self, name: str) -> int:
+        cursor = await self._conn.execute(
+            "INSERT INTO bookmark_groups (name, created_at) VALUES (?, ?)",
+            (name, datetime.now(timezone.utc).isoformat()),
+        )
+        await self._conn.commit()
+        return cursor.lastrowid
+
+    async def get_all_bookmark_groups(self) -> list[BookmarkGroup]:
+        cursor = await self._conn.execute(
+            "SELECT * FROM bookmark_groups ORDER BY name"
+        )
+        rows = await cursor.fetchall()
+        return [
+            BookmarkGroup(
+                id=row["id"], name=row["name"],
+                created_at=_str_to_dt(row["created_at"]),
+            )
+            for row in rows
+        ]
+
+    async def rename_bookmark_group(self, group_id: int, new_name: str) -> bool:
+        cursor = await self._conn.execute(
+            "UPDATE bookmark_groups SET name = ? WHERE id = ?",
+            (new_name, group_id),
+        )
+        await self._conn.commit()
+        return cursor.rowcount > 0
+
+    async def delete_bookmark_group(self, group_id: int) -> bool:
+        cursor = await self._conn.execute(
+            "DELETE FROM bookmark_groups WHERE id = ?", (group_id,)
+        )
+        await self._conn.commit()
+        return cursor.rowcount > 0
+
+    async def get_group_member_ids(self, group_id: int) -> list[int]:
+        cursor = await self._conn.execute(
+            "SELECT bookmark_id FROM bookmark_group_members WHERE group_id = ? ORDER BY bookmark_id",
+            (group_id,),
+        )
+        rows = await cursor.fetchall()
+        return [row["bookmark_id"] for row in rows]
+
+    async def set_group_members(self, group_id: int, bookmark_ids: list[int]) -> None:
+        await self._conn.execute(
+            "DELETE FROM bookmark_group_members WHERE group_id = ?", (group_id,)
+        )
+        for bid in bookmark_ids:
+            await self._conn.execute(
+                "INSERT INTO bookmark_group_members (group_id, bookmark_id) VALUES (?, ?)",
+                (group_id, bid),
+            )
+        await self._conn.commit()
+
+    async def add_group_member(self, group_id: int, bookmark_id: int) -> bool:
+        await self._conn.execute(
+            "INSERT OR IGNORE INTO bookmark_group_members (group_id, bookmark_id) VALUES (?, ?)",
+            (group_id, bookmark_id),
+        )
+        await self._conn.commit()
+        return True
+
+    async def remove_group_member(self, group_id: int, bookmark_id: int) -> bool:
+        cursor = await self._conn.execute(
+            "DELETE FROM bookmark_group_members WHERE group_id = ? AND bookmark_id = ?",
+            (group_id, bookmark_id),
+        )
+        await self._conn.commit()
+        return cursor.rowcount > 0
+
+    async def get_groups_for_bookmark(self, bookmark_id: int) -> list[BookmarkGroup]:
+        cursor = await self._conn.execute(
+            """SELECT g.* FROM bookmark_groups g
+               JOIN bookmark_group_members m ON g.id = m.group_id
+               WHERE m.bookmark_id = ?
+               ORDER BY g.name""",
+            (bookmark_id,),
+        )
+        rows = await cursor.fetchall()
+        return [
+            BookmarkGroup(id=row["id"], name=row["name"],
+                          created_at=_str_to_dt(row["created_at"]))
+            for row in rows
+        ]
+
+    async def get_all_bookmark_groups_with_counts(self) -> list[dict]:
+        cursor = await self._conn.execute(
+            """SELECT g.id, g.name, g.created_at, COUNT(m.bookmark_id) as member_count
+               FROM bookmark_groups g
+               LEFT JOIN bookmark_group_members m ON g.id = m.group_id
+               GROUP BY g.id
+               ORDER BY g.name"""
+        )
+        rows = await cursor.fetchall()
+        return [
+            {"id": row["id"], "name": row["name"],
+             "created_at": row["created_at"],
+             "member_count": row["member_count"]}
+            for row in rows
+        ]
 
     async def update_bookmark(
         self,
@@ -479,6 +598,10 @@ class Database:
 
     async def clear_signals(self) -> None:
         async with self._lock:
+            await self._conn.execute("DELETE FROM decoder_results")
+            await self._conn.execute("DELETE FROM learned_patterns")
+            await self._conn.execute("DELETE FROM recordings")
+            await self._conn.execute("DELETE FROM activity_log")
             await self._conn.execute("DELETE FROM signals")
             await self._conn.commit()
 
@@ -499,8 +622,10 @@ class Database:
 
     async def clear_all(self) -> None:
         async with self._lock:
-            for table in ("signals", "activity_log", "bookmarks", "recordings",
-                          "decoder_results", "learned_patterns"):
+            # Delete in FK-safe order: children before parents
+            for table in ("bookmark_group_members", "decoder_results",
+                          "learned_patterns", "recordings", "activity_log",
+                          "signals", "bookmarks", "bookmark_groups"):
                 await self._conn.execute(f"DELETE FROM {table}")
             await self._conn.commit()
 

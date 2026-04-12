@@ -42,3 +42,10 @@ class Bookmark:
     notes: str = ""
     id: int | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass
+class BookmarkGroup:
+    name: str
+    id: int | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
