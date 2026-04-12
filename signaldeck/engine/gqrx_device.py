@@ -60,17 +60,24 @@ class GqrxDevice:
         await self._client.set_rds(False)
 
     async def get_rds(self) -> dict | None:
-        """Poll gqrx for current RDS data. Returns dict or None."""
+        """Poll gqrx for current RDS data. Returns dict or None.
+
+        Requires gqrx v2.17.6 or newer for PS name and RadioText —
+        those rigctl commands were added 2024-09-16. On older builds
+        the PS/RT methods return empty strings and the broadcast
+        gate at main.py:786 (`rds.get("ps_name")`) will suppress the
+        payload until an upgrade.
+        """
         try:
             pi = await self._client.get_rds_pi()
-            if not pi or pi == "0000":
+            if not pi:
                 return None
             ps = await self._client.get_rds_ps_name()
             rt = await self._client.get_rds_radiotext()
             return {
                 "pi_code": pi,
-                "ps_name": ps.strip() if ps else "",
-                "radio_text": rt.strip() if rt else "",
+                "ps_name": ps,
+                "radio_text": rt,
             }
         except Exception:
             return None

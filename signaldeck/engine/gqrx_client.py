@@ -155,16 +155,42 @@ class GqrxClient:
         return resp.strip() == "1"
 
     async def get_rds_pi(self) -> str:
-        resp = await self._send_command("p RDS_PI")
-        return resp.strip()
+        """Return the RDS PI code in hex, or empty string if unavailable.
+
+        gqrx returns "0000" when no RDS signal is locked, and "RPRT <n>"
+        if the command fails. We normalize both to an empty string so
+        callers can treat "no data" uniformly.
+        """
+        resp = (await self._send_command("p RDS_PI")).strip()
+        if not resp or resp == "0000" or resp.startswith("RPRT "):
+            return ""
+        return resp
 
     async def get_rds_ps_name(self) -> str:
-        resp = await self._send_command("p RDS_PS_NAME")
-        return resp.strip()
+        """Return the RDS Program Service (station) name, or "".
+
+        Requires gqrx v2.17.6 or newer — the `p RDS_PS_NAME` command
+        was added in commit 4563150e (2024-09-16, "Improve RDS
+        reporting"). On older gqrx builds it returns `RPRT 1`, which
+        we normalize to an empty string here so the rest of the
+        pipeline treats it as "no data yet".
+        """
+        resp = (await self._send_command("p RDS_PS_NAME")).strip()
+        if not resp or resp.startswith("RPRT "):
+            return ""
+        return resp
 
     async def get_rds_radiotext(self) -> str:
-        resp = await self._send_command("p RDS_RADIOTEXT")
-        return resp.strip()
+        """Return the RDS RadioText string, or "".
+
+        Requires gqrx v2.17.6 or newer. See get_rds_ps_name() for the
+        version history. Normalizes `RPRT <n>` error responses to an
+        empty string.
+        """
+        resp = (await self._send_command("p RDS_RADIOTEXT")).strip()
+        if not resp or resp.startswith("RPRT "):
+            return ""
+        return resp
 
     # --- DSP / Mute ---
 
