@@ -81,6 +81,15 @@ function dashboard() {
     groupFilterFreqMax: null,
     groupFilterMod: '',
 
+    // --- Bookmark Scanning ---
+    bkScanActive: false,
+    bkScanMode: 'dwell',       // 'dwell' | 'activity' | 'manual'
+    scanScope: 'all',          // 'all' | group ID (number)
+    scanDwellMs: 5000,
+    scanIndex: -1,
+    _scanTimer: null,
+    _scanSquelchPoll: null,
+
     // --- Audio ---
     audioFreqMhz: null,
     audioPlaying: false,
@@ -254,6 +263,10 @@ function dashboard() {
     // Navigation
     // =====================================================
     navigate(page, updateHash = true) {
+      // Stop bookmark scan when leaving bookmarks page
+      if (this.bkScanActive && page !== 'bookmarks') {
+        this.stopScan();
+      }
       this.currentPage = page;
       this.mobileMenuOpen = false;
       if (updateHash) window.location.hash = page;
@@ -658,6 +671,119 @@ function dashboard() {
       this.fetchGroups();
     },
 
+    // --- Bookmark Scan Methods ---
+
+    async _loadScanScopeMembers() {
+      if (this.scanScope === 'all') return;
+      const gid = parseInt(this.scanScope);
+      const group = this.bookmarkGroups.find(g => g.id === gid);
+      if (!group) return;
+      const members = await this.apiFetch(`/api/bookmark-groups/${gid}/members`, { _silent: true });
+      if (members) group._memberIds = members.map(m => m.bookmark_id);
+    },
+
+    async startScan() {
+      await this._loadScanScopeMembers();
+      const list = this.scanList;
+      if (list.length === 0) {
+        this.showToast('No bookmarks to scan', 'warning');
+        return;
+      }
+      this.bkScanActive = true;
+      if (this.scanIndex < 0 || this.scanIndex >= list.length) this.scanIndex = 0;
+      this.scanTuneCurrent();
+
+      if (this.bkScanMode === 'dwell') {
+        this._scanTimer = setTimeout(() => this._dwellAdvance(), this.scanDwellMs);
+      } else if (this.bkScanMode === 'activity') {
+        this._scanSquelchPoll = setInterval(() => this._activityPoll(), 500);
+      }
+    },
+
+    stopScan() {
+      this.bkScanActive = false;
+      if (this._scanTimer) { clearTimeout(this._scanTimer); this._scanTimer = null; }
+      if (this._scanSquelchPoll) { clearInterval(this._scanSquelchPoll); this._scanSquelchPoll = null; }
+    },
+
+    scanTuneCurrent() {
+      const list = this.scanList;
+      if (this.scanIndex < 0 || this.scanIndex >= list.length) return;
+      const bm = list[this.scanIndex];
+      this.tuneAndListen(bm.frequency_hz, bm.modulation);
+    },
+
+    async scanNext() {
+      await this._loadScanScopeMembers();
+      const list = this.scanList;
+      if (list.length === 0) return;
+      if (this.bkScanMode === 'manual') this.bkScanActive = true;
+      this.scanIndex = (this.scanIndex + 1) % list.length;
+      this.scanTuneCurrent();
+      this._restartScanTimer();
+    },
+
+    async scanPrev() {
+      await this._loadScanScopeMembers();
+      const list = this.scanList;
+      if (list.length === 0) return;
+      if (this.bkScanMode === 'manual') this.bkScanActive = true;
+      this.scanIndex = (this.scanIndex - 1 + list.length) % list.length;
+      this.scanTuneCurrent();
+      this._restartScanTimer();
+    },
+
+    async scanJumpFirst() {
+      await this._loadScanScopeMembers();
+      const list = this.scanList;
+      if (list.length === 0) return;
+      this.scanIndex = 0;
+      this.scanTuneCurrent();
+      this._restartScanTimer();
+    },
+
+    async scanJumpLast() {
+      await this._loadScanScopeMembers();
+      const list = this.scanList;
+      if (list.length === 0) return;
+      this.scanIndex = list.length - 1;
+      this.scanTuneCurrent();
+      this._restartScanTimer();
+    },
+
+    _restartScanTimer() {
+      if (!this.bkScanActive || this.bkScanMode !== 'dwell') return;
+      if (this._scanTimer) clearTimeout(this._scanTimer);
+      this._scanTimer = setTimeout(() => this._dwellAdvance(), this.scanDwellMs);
+    },
+
+    _dwellAdvance() {
+      if (!this.bkScanActive) return;
+      const list = this.scanList;
+      this.scanIndex = (this.scanIndex + 1) % list.length;
+      this.scanTuneCurrent();
+      this._scanTimer = setTimeout(() => this._dwellAdvance(), this.scanDwellMs);
+    },
+
+    async _activityPoll() {
+      if (!this.bkScanActive) return;
+      try {
+        const data = await this.apiFetch('/api/gqrx/squelch-open', { _silent: true });
+        if (!data) return;
+        if (!data.open) {
+          // Squelch closed — advance after brief settle time
+          await new Promise(r => setTimeout(r, 300));
+          if (!this.bkScanActive) return;
+          const list = this.scanList;
+          this.scanIndex = (this.scanIndex + 1) % list.length;
+          this.scanTuneCurrent();
+        }
+        // If squelch is open, stay on current frequency (do nothing)
+      } catch (e) {
+        // Ignore polling errors
+      }
+    },
+
     applySettings(settings) {
       this.settings = settings;
       if (settings.devices) {
@@ -1003,6 +1129,28 @@ function dashboard() {
     get availableModulations() {
       const mods = new Set(this.bookmarks.map(b => b.modulation).filter(Boolean));
       return [...mods].sort();
+    },
+
+    get scanList() {
+      let list = [...this.bookmarks];
+      if (this.scanScope !== 'all') {
+        const gid = parseInt(this.scanScope);
+        const group = this.bookmarkGroups.find(g => g.id === gid);
+        if (group && group._memberIds) {
+          list = list.filter(bm => group._memberIds.includes(bm.id));
+        }
+      }
+      // Sort by frequency ascending
+      list.sort((a, b) => a.frequency_hz - b.frequency_hz);
+      return list;
+    },
+
+    get scanCurrentLabel() {
+      const list = this.scanList;
+      if (this.scanIndex >= 0 && this.scanIndex < list.length) {
+        return list[this.scanIndex].label;
+      }
+      return '';
     },
 
     get filteredLogLines() {

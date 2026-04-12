@@ -1126,6 +1126,12 @@ a:hover { text-decoration: underline; }
   color: var(--text-primary);
 }
 
+/* Scan toolbar */
+.scan-toolbar .btn-sm {
+  min-width: 32px;
+  text-align: center;
+}
+
 .clickable {
   cursor: pointer;
 }

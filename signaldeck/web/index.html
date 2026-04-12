@@ -353,6 +353,61 @@
         </div>
       </div>
 
+      <!-- Scan Toolbar -->
+      <div class="card scan-toolbar" style="margin-bottom: 1rem; padding: 0.75rem 1rem;">
+        <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+          <!-- Scope -->
+          <label style="font-size: 0.85rem; display: flex; align-items: center; gap: 0.25rem;">
+            Scan:
+            <select x-model="scanScope" class="input-sm" style="width: 160px;">
+              <option value="all">All Bookmarks</option>
+              <template x-for="g in bookmarkGroups" :key="g.id">
+                <option :value="g.id" x-text="g.name"></option>
+              </template>
+            </select>
+          </label>
+
+          <!-- Mode -->
+          <label style="font-size: 0.85rem; display: flex; align-items: center; gap: 0.25rem;">
+            Mode:
+            <select x-model="bkScanMode" class="input-sm" style="width: 120px;">
+              <option value="dwell">Dwell</option>
+              <option value="activity">Activity</option>
+              <option value="manual">Manual</option>
+            </select>
+          </label>
+
+          <!-- Dwell time (only in dwell mode) -->
+          <label x-show="bkScanMode === 'dwell'" x-cloak style="font-size: 0.85rem; display: flex; align-items: center; gap: 0.25rem;">
+            Dwell:
+            <select x-model.number="scanDwellMs" class="input-sm" style="width: 80px;">
+              <option value="3000">3s</option>
+              <option value="5000">5s</option>
+              <option value="10000">10s</option>
+              <option value="15000">15s</option>
+              <option value="30000">30s</option>
+            </select>
+          </label>
+
+          <!-- Navigation buttons -->
+          <div style="display: flex; gap: 0.25rem;">
+            <button class="btn btn-sm" @click="scanJumpFirst()" title="First">|&lt;</button>
+            <button class="btn btn-sm" @click="scanPrev()" title="Previous">&lt;</button>
+            <button class="btn btn-sm btn-primary" x-show="bkScanMode !== 'manual'"
+                    @click="bkScanActive ? stopScan() : startScan()"
+                    x-text="bkScanActive ? 'Stop' : 'Start'"></button>
+            <button class="btn btn-sm" @click="scanNext()" title="Next">&gt;</button>
+            <button class="btn btn-sm" @click="scanJumpLast()" title="Last">&gt;|</button>
+          </div>
+
+          <!-- Progress indicator -->
+          <span x-show="bkScanActive || scanIndex >= 0" x-cloak style="font-size: 0.85rem; color: var(--text-secondary);">
+            <span x-text="scanCurrentLabel"></span>
+            <span x-show="scanList.length > 0" x-text="' (' + (scanIndex + 1) + '/' + scanList.length + ')'"></span>
+          </span>
+        </div>
+      </div>
+
       <!-- Bookmarks Table -->
       <div class="card">
         <div class="table-wrap">
