@@ -1098,6 +1098,34 @@ a:hover { text-decoration: underline; }
   font-size: 0.75rem;
 }
 
+/* Bookmark group pills */
+.badge-group {
+  cursor: pointer;
+  padding: 0.2rem 0.6rem;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  transition: background 0.15s;
+}
+.badge-group:hover {
+  background: var(--accent);
+  color: #fff;
+}
+.badge-group-active {
+  background: var(--accent);
+  color: #fff;
+}
+.input-sm {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
 .clickable {
   cursor: pointer;
 }

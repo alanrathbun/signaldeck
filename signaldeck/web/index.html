@@ -333,6 +333,26 @@
         <button class="btn btn-primary" @click="openNewBookmark()">+ Add bookmark</button>
       </div>
 
+      <!-- Group Bar -->
+      <div class="card group-bar" style="margin-bottom: 1rem; padding: 0.75rem 1rem;">
+        <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+          <span style="font-weight: 600; font-size: 0.85rem; color: var(--text-secondary);">Groups:</span>
+          <template x-for="g in bookmarkGroups" :key="g.id">
+            <button class="badge badge-group" :class="managingGroupId === g.id ? 'badge-group-active' : ''"
+                    @click="openManageGroup(g)"
+                    x-text="g.name + ' (' + g.member_count + ')'"></button>
+          </template>
+          <button class="btn btn-sm" @click="showCreateGroup = true" x-show="!showCreateGroup">+ Group</button>
+          <div x-show="showCreateGroup" x-cloak style="display: inline-flex; gap: 0.25rem; align-items: center;">
+            <input type="text" x-model="newGroupName" placeholder="Group name" class="input-sm"
+                   @keydown.enter="createGroup()" @keydown.escape="showCreateGroup = false; newGroupName = ''"
+                   style="width: 140px;">
+            <button class="btn btn-sm btn-primary" @click="createGroup()">Add</button>
+            <button class="btn btn-sm" @click="showCreateGroup = false; newGroupName = ''">Cancel</button>
+          </div>
+        </div>
+      </div>
+
       <!-- Bookmarks Table -->
       <div class="card">
         <div class="table-wrap">
@@ -375,6 +395,67 @@
               </tr>
             </tbody>
           </table>
+        </div>
+      </div>
+
+      <!-- Manage Group Modal -->
+      <div class="modal-overlay" x-show="managingGroupId !== null" x-cloak @click.self="managingGroupId = null">
+        <div class="modal-card" style="max-width: 600px; max-height: 80vh; display: flex; flex-direction: column;">
+          <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center;">
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <h3 x-show="!editingGroupName" x-text="managingGroupName" style="margin: 0;"></h3>
+              <button x-show="!editingGroupName" class="btn btn-sm" @click="editingGroupName = true; editGroupNameVal = managingGroupName">Rename</button>
+              <div x-show="editingGroupName" x-cloak style="display: flex; gap: 0.25rem; align-items: center;">
+                <input type="text" x-model="editGroupNameVal" class="input-sm" style="width: 180px;"
+                       @keydown.enter="renameGroup()" @keydown.escape="editingGroupName = false">
+                <button class="btn btn-sm btn-primary" @click="renameGroup()">Save</button>
+                <button class="btn btn-sm" @click="editingGroupName = false">Cancel</button>
+              </div>
+            </div>
+            <button class="btn btn-sm" @click="managingGroupId = null">&times;</button>
+          </div>
+
+          <!-- Filter bar -->
+          <div style="padding: 0.5rem 0; display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
+            <input type="text" x-model="groupFilterText" placeholder="Search label..." class="input-sm" style="width: 160px;">
+            <input type="number" x-model.number="groupFilterFreqMin" placeholder="Min MHz" class="input-sm" step="0.001" style="width: 100px;">
+            <input type="number" x-model.number="groupFilterFreqMax" placeholder="Max MHz" class="input-sm" step="0.001" style="width: 100px;">
+            <select x-model="groupFilterMod" class="input-sm" style="width: 100px;">
+              <option value="">All mods</option>
+              <template x-for="m in availableModulations" :key="m">
+                <option :value="m" x-text="m"></option>
+              </template>
+            </select>
+            <button class="btn btn-sm btn-primary" @click="selectAllFilteredForGroup()">Select all matching</button>
+            <button class="btn btn-sm" @click="clearGroupSelections()">Clear all</button>
+          </div>
+
+          <!-- Bookmark checklist -->
+          <div style="overflow-y: auto; flex: 1; border: 1px solid var(--border); border-radius: 4px;">
+            <table class="data-table" style="margin: 0;">
+              <thead><tr><th style="width: 40px;"></th><th>Frequency</th><th>Label</th><th>Mod</th></tr></thead>
+              <tbody>
+                <template x-for="bm in filteredBookmarksForGroup" :key="bm.id">
+                  <tr>
+                    <td><input type="checkbox" :checked="groupSelectedIds.includes(bm.id)"
+                               @change="toggleGroupMember(bm.id)"></td>
+                    <td x-text="formatFreq(bm.frequency_hz)"></td>
+                    <td x-text="bm.label"></td>
+                    <td><span class="badge" :class="modBadge(bm.modulation)" x-text="bm.modulation"></span></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Footer -->
+          <div style="padding: 0.75rem 0 0; display: flex; justify-content: space-between;">
+            <button class="btn btn-sm btn-danger" @click="deleteGroupConfirm()">Delete Group</button>
+            <div style="display: flex; gap: 0.5rem;">
+              <button class="btn btn-sm" @click="managingGroupId = null">Cancel</button>
+              <button class="btn btn-sm btn-primary" @click="saveGroupMembers()">Save</button>
+            </div>
+          </div>
         </div>
       </div>
     </section>

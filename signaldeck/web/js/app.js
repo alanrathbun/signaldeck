@@ -67,6 +67,20 @@ function dashboard() {
     editModalError: '',
     savingBookmark: false,         // true while saveBookmarkEdit is in flight (prevents double-submit)
 
+    // --- Bookmark Groups ---
+    bookmarkGroups: [],
+    showCreateGroup: false,
+    newGroupName: '',
+    managingGroupId: null,
+    managingGroupName: '',
+    editingGroupName: false,
+    editGroupNameVal: '',
+    groupSelectedIds: [],
+    groupFilterText: '',
+    groupFilterFreqMin: null,
+    groupFilterFreqMax: null,
+    groupFilterMod: '',
+
     // --- Audio ---
     audioFreqMhz: null,
     audioPlaying: false,
@@ -220,6 +234,7 @@ function dashboard() {
       // Load bookmarks up-front so the Live page can flag already-bookmarked
       // signals without waiting for the user to visit the Bookmarks page.
       this.fetchBookmarks();
+      this.fetchGroups();
 
       // Periodic enrichment sync for database fields
       this.fetchEnrichment();
@@ -272,7 +287,7 @@ function dashboard() {
       }
       switch (this.currentPage) {
         case 'recordings': this.fetchRecordings(); break;
-        case 'bookmarks': this.fetchBookmarks(); break;
+        case 'bookmarks': this.fetchBookmarks(); this.fetchGroups(); break;
         case 'settings': this.fetchSettings(true); this.fetchSessions(); this.fetchStatusPage(); break;
       }
       // Always refresh /api/status on entry to pages that display audioStatus.
@@ -555,6 +570,92 @@ function dashboard() {
     async fetchBookmarks() {
       const data = await this.apiFetch('/api/bookmarks', { _silent: true });
       if (data) this.bookmarks = Array.isArray(data) ? data : (data.bookmarks || []);
+    },
+
+    // --- Bookmark Group Methods ---
+
+    async fetchGroups() {
+      const data = await this.apiFetch('/api/bookmark-groups', { _silent: true });
+      if (data) this.bookmarkGroups = data;
+    },
+
+    async createGroup() {
+      if (!this.newGroupName.trim()) return;
+      const result = await this.apiFetch('/api/bookmark-groups', {
+        method: 'POST',
+        body: JSON.stringify({ name: this.newGroupName.trim() }),
+      });
+      if (result) {
+        this.showCreateGroup = false;
+        this.newGroupName = '';
+        this.fetchGroups();
+      }
+    },
+
+    async openManageGroup(group) {
+      this.managingGroupId = group.id;
+      this.managingGroupName = group.name;
+      this.editingGroupName = false;
+      this.groupFilterText = '';
+      this.groupFilterFreqMin = null;
+      this.groupFilterFreqMax = null;
+      this.groupFilterMod = '';
+      const members = await this.apiFetch(`/api/bookmark-groups/${group.id}/members`, { _silent: true });
+      this.groupSelectedIds = members ? members.map(m => m.bookmark_id) : [];
+    },
+
+    toggleGroupMember(bmId) {
+      const idx = this.groupSelectedIds.indexOf(bmId);
+      if (idx >= 0) {
+        this.groupSelectedIds.splice(idx, 1);
+      } else {
+        this.groupSelectedIds.push(bmId);
+      }
+    },
+
+    selectAllFilteredForGroup() {
+      for (const bm of this.filteredBookmarksForGroup) {
+        if (!this.groupSelectedIds.includes(bm.id)) {
+          this.groupSelectedIds.push(bm.id);
+        }
+      }
+    },
+
+    clearGroupSelections() {
+      this.groupSelectedIds = [];
+    },
+
+    async saveGroupMembers() {
+      if (this.managingGroupId === null) return;
+      await this.apiFetch(`/api/bookmark-groups/${this.managingGroupId}/members`, {
+        method: 'PUT',
+        body: JSON.stringify({ bookmark_ids: this.groupSelectedIds }),
+      });
+      this.showToast('Group updated', 'success');
+      this.managingGroupId = null;
+      this.fetchGroups();
+    },
+
+    async renameGroup() {
+      if (!this.editGroupNameVal.trim() || this.managingGroupId === null) return;
+      await this.apiFetch(`/api/bookmark-groups/${this.managingGroupId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name: this.editGroupNameVal.trim() }),
+      });
+      this.managingGroupName = this.editGroupNameVal.trim();
+      this.editingGroupName = false;
+      this.fetchGroups();
+    },
+
+    async deleteGroupConfirm() {
+      if (this.managingGroupId === null) return;
+      if (!confirm(`Delete group "${this.managingGroupName}"?`)) return;
+      await this.apiFetch(`/api/bookmark-groups/${this.managingGroupId}`, {
+        method: 'DELETE',
+      });
+      this.managingGroupId = null;
+      this.showToast('Group deleted', 'success');
+      this.fetchGroups();
     },
 
     applySettings(settings) {
@@ -886,6 +987,22 @@ function dashboard() {
       } catch (e) {
         this.showToast('Failed to load log file', 'error');
       }
+    },
+
+    get filteredBookmarksForGroup() {
+      return this.bookmarks.filter(bm => {
+        if (this.groupFilterText && !bm.label.toLowerCase().includes(this.groupFilterText.toLowerCase())) return false;
+        const freqMhz = bm.frequency_hz / 1e6;
+        if (this.groupFilterFreqMin && freqMhz < this.groupFilterFreqMin) return false;
+        if (this.groupFilterFreqMax && freqMhz > this.groupFilterFreqMax) return false;
+        if (this.groupFilterMod && bm.modulation !== this.groupFilterMod) return false;
+        return true;
+      });
+    },
+
+    get availableModulations() {
+      const mods = new Set(this.bookmarks.map(b => b.modulation).filter(Boolean));
+      return [...mods].sort();
     },
 
     get filteredLogLines() {
