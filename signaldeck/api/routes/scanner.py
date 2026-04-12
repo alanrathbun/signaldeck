@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi import Query
 from pydantic import BaseModel
 
@@ -348,3 +348,20 @@ def _persist_user_config(config: dict) -> None:
         logger.info("Settings persisted to %s", _USER_CONFIG_PATH)
     except Exception as e:
         logger.error("Failed to persist settings: %s", e)
+
+
+@router.get("/gqrx/squelch-open")
+async def gqrx_squelch_open():
+    gqrx_client = _scanner_state.get("_gqrx_client")
+    if gqrx_client is None:
+        raise HTTPException(status_code=503, detail="gqrx not connected")
+    try:
+        strength = await gqrx_client.get_signal_strength()
+        squelch = await gqrx_client.get_squelch()
+        return {
+            "open": strength > squelch,
+            "strength_dbfs": strength,
+            "squelch_dbfs": squelch,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"gqrx error: {e}")

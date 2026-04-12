@@ -322,6 +322,7 @@ def start(config_path: str | None, headless: bool, host: str, port: int) -> None
                             if cfg["_runtime_devices"].get("scanner") else None
                         )
                         _scanner_state["tuner_device"] = gd.label
+                        _scanner_state["_gqrx_client"] = gqrx_device._client
                     except ImportError:
                         pass
             except Exception as e:
