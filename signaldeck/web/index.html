@@ -349,7 +349,7 @@
             </thead>
             <tbody>
               <template x-for="bm in bookmarks" :key="bm.id">
-                <tr>
+                <tr :class="audioFreqMhz && Math.abs(bm.frequency_hz - audioFreqMhz * 1e6) < 1000 ? 'row-active' : ''">
                   <td class="freq-cell" x-text="formatFreq(bm.frequency_hz)"></td>
                   <td>
                     <div x-text="bm.label"></div>
@@ -364,7 +364,7 @@
                     <span class="priority-stars" x-text="'*'.repeat(bm.priority || 0).replace(/\*/g, '\u2605')"></span>
                   </td>
                   <td>
-                    <button class="btn btn-sm btn-primary" @click="navigate('live'); tuneAndListen(bm.frequency_hz, bm.modulation)">Tune</button>
+                    <button class="btn btn-sm btn-primary" @click="tuneAndListen(bm.frequency_hz, bm.modulation)">Tune</button>
                     <button class="btn btn-sm" @click="openEditBookmark(bm)">Edit</button>
                     <button class="btn btn-sm btn-danger" @click="deleteBookmark(bm.id)">Delete</button>
                   </td>
